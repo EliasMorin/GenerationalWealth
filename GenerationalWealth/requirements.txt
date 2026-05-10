@@ -1,0 +1,42 @@
+# Web Framework
+flask
+flask-cors
+flask-sqlalchemy
+
+# HTTP / Scraping
+requests
+cloudscraper
+beautifulsoup4
+feedparser
+playwright
+selenium
+
+# Finance / Data
+yfinance
+pandas
+numpy
+pdfplumber
+tqdm
+
+# PDF Generation
+fpdf2
+
+# AI / NLP
+transformers
+torch
+
+# Computer Vision / OCR
+opencv-python
+easyocr
+
+# Media Download
+yt-dlp
+
+# WebSockets
+websockets
+
+# SSL
+certifi
+
+# Misc
+configparser

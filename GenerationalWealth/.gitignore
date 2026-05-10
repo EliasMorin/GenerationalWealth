@@ -1,0 +1,31 @@
+# Sensitive configuration (credentials, tokens)
+config.ini
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Database / instance
+instance/
+
+# macOS
+.DS_Store
+../.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/

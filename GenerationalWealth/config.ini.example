@@ -1,0 +1,9 @@
+[secret]
+phone_number = +33XXXXXXXXX
+pin = XXXX
+first_name = YourFirstName
+last_name = YourLastName
+tr_session = 
+tr_refresh = 
+waf_token = 
+device_info = 
