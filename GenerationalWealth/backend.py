@@ -12567,13 +12567,19 @@ def run_initial_loading_tasks():
 
             if still_empty:
                 print("[WEB] Recuperation en direct des perspectives (Scraping)...")
-                try:
+                import concurrent.futures as _cf
+                def _run_bank_scrape():
                     scraper = BankForecastScraper()
-                    results = scraper.scrape_all()
-                    if results:
-                        # db_save_bank_forecasts est déjà appelé dans scrape_all avec le bon format
-                        # on a juste besoin de sauvegarder le raw cache si scrape_all ne le fait pas (mais il le fait)
-                        print(f"[OK] {len(results)} sources bancaires recuperees.")
+                    return scraper.scrape_all()
+                try:
+                    with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+                        _fut = _ex.submit(_run_bank_scrape)
+                        try:
+                            results = _fut.result(timeout=90)  # 90s max pour tout le scraping
+                            if results:
+                                print(f"[OK] {len(results)} sources bancaires recuperees.")
+                        except _cf.TimeoutError:
+                            print("[WARN] Scraping bancaire timeout (90s) - passage a la suite.")
                 except Exception as e:
                     print(f"[ERROR] Erreur scraping perspectives: {e}")
         
