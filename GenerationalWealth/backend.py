@@ -1589,12 +1589,28 @@ def get_waf_token_with_selenium():
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0"
     )
+    # Utilise le chromium système si disponible (évite le chromedriver téléchargé)
+    for system_chrome in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+        if os.path.exists(system_chrome):
+            options.binary_location = system_chrome
+            break
     try:
-        driver = webdriver.Chrome(options=options)
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        # Cherche chromedriver système en priorité
+        system_chromedriver = None
+        for path in ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver", "/usr/lib/chromium-browser/chromedriver"]:
+            if os.path.exists(path):
+                system_chromedriver = path
+                break
+        driver = webdriver.Chrome(
+            service=ChromeService(executable_path=system_chromedriver) if system_chromedriver else ChromeService(),
+            options=options
+        )
         # Masquer le flag webdriver détecté par le WAF
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
