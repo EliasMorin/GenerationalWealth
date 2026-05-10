@@ -1029,7 +1029,19 @@ def load_portfolio_data(user_id=None):
 # CONFIGURATION
 # ============================================================================
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+def _load_groq_key():
+    """Lit la clé Groq depuis la variable d'environnement ou config.ini."""
+    key = os.environ.get("GROQ_API_KEY", "")
+    if not key:
+        try:
+            _cfg = configparser.ConfigParser()
+            _cfg.read("config.ini")
+            key = _cfg.get("groq", "api_key", fallback="")
+        except Exception:
+            pass
+    return key
+
+GROQ_API_KEY = _load_groq_key()
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
