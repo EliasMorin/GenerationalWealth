@@ -1046,6 +1046,16 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
+def _jwt_expiry(token):
+    """Retourne le timestamp d'expiration (exp) d'un JWT sans vérifier la signature.
+    Retourne 0 en cas d'échec."""
+    try:
+        payload = token.split('.')[1]
+        payload += '=' * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        return int(data.get('exp', 0))
+    except Exception:
+        return 0
 
 
 # Fichiers de cache
@@ -2135,9 +2145,13 @@ class TradeRepublicAPI:
         except Exception as e:
             print(f"[ERROR] WebSocket connection failed: {e}")
             if "401" in str(e) or "1000" in str(e) or "1006" in str(e) or "3003" in str(e):
-                print("[WARN] Session expired or invalid (code 3003). Clearing token - please log in again via the UI.")
-                self.save_session_token("")
-                TR_WS_ERROR = {"code": 3003, "message": "Session expired. Please log in again."}
+                print("[WARN] Session expirée (3003) - tentative de renouvellement automatique...")
+                TR_WS_ERROR = {"code": 3003, "message": "Session expirée - renouvellement automatique..."}
+                if not self.refresh_session_token():
+                    # Refresh échoué : effacer le token et lancer le re-login automatique
+                    self.save_session_token("")
+                    TR_WS_ERROR = {"code": 3003, "message": "Session expirée - reconnexion automatique en cours..."}
+                    threading.Thread(target=_auto_relogin, daemon=True).start()
             return False
 
     async def close(self):
@@ -2837,6 +2851,62 @@ def run_live_updates():
 # Start background thread
 live_thread = threading.Thread(target=run_live_updates, daemon=True)
 live_thread.start()
+
+
+def _auto_relogin():
+    """Re-login automatique avec les credentials stockés dans config.ini.
+    Envoie le SMS OTP sur le téléphone — l'utilisateur n'a qu'à saisir le code."""
+    try:
+        cfg = configparser.ConfigParser()
+        cfg.read("config.ini")
+        phone = cfg.get("secret", "phone_number", fallback=None)
+        pin   = cfg.get("secret", "pin",          fallback=None)
+        if phone and pin:
+            print(f"[AutoLogin] Re-login automatique pour {phone}...")
+            tr_api.initiate_login(phone, pin)
+        else:
+            print("[AutoLogin] Impossible : phone/pin absents de config.ini")
+    except Exception as e:
+        print(f"[AutoLogin] Erreur : {e}")
+
+
+def _session_watchdog():
+    """Surveille l'expiration des tokens TR et les renouvelle proactivement sans intervention."""
+    print("[Watchdog] Démarrage du watchdog de session Trade Republic.")
+    while True:
+        try:
+            cfg = configparser.ConfigParser()
+            cfg.read("config.ini")
+            session_tok = cfg.get("secret", "tr_session", fallback=None) or ""
+            refresh_tok = cfg.get("secret", "tr_refresh", fallback=None) or ""
+            now = time.time()
+
+            if session_tok:
+                session_exp = _jwt_expiry(session_tok)
+                # Renouveler si expiré ou expire dans moins de 10 min
+                if session_exp and (session_exp - now) < 600:
+                    remaining = max(0, int(session_exp - now))
+                    print(f"[Watchdog] tr_session expire dans {remaining}s - renouvellement proactif...")
+                    if not tr_api.refresh_session_token():
+                        # Refresh échoué : tenter re-login complet
+                        print("[Watchdog] Refresh échoué - tentative de re-login automatique...")
+                        _auto_relogin()
+
+            if refresh_tok:
+                refresh_exp = _jwt_expiry(refresh_tok)
+                # Re-login auto si tr_refresh expire dans moins de 5 min
+                if refresh_exp and (refresh_exp - now) < 300:
+                    remaining = max(0, int(refresh_exp - now))
+                    print(f"[Watchdog] tr_refresh expire dans {remaining}s - re-login automatique...")
+                    _auto_relogin()
+
+        except Exception as e:
+            print(f"[Watchdog] Erreur : {e}")
+        time.sleep(120)  # Vérification toutes les 2 minutes
+
+
+_watchdog_thread = threading.Thread(target=_session_watchdog, daemon=True)
+_watchdog_thread.start()
 
 # ============================================================================
 # CASH ANALYZER
@@ -12367,8 +12437,10 @@ def background_tr_portfolio_loop():
                         loop.run_until_complete(local_api.close())
                     else:
                         print("[Background TR] Login failed or session invalid - trying token refresh...")
-                        local_api.session_token = None
-                        local_api.refresh_session_token()
+                        if not local_api.refresh_session_token():
+                            # Refresh échoué, effacer le token pour forcer le re-login
+                            local_api.session_token = None
+                            threading.Thread(target=_auto_relogin, daemon=True).start()
                  except Exception as e:
                      print(f"Background TR Error: {e}")
                  finally:
@@ -12567,19 +12639,13 @@ def run_initial_loading_tasks():
 
             if still_empty:
                 print("[WEB] Recuperation en direct des perspectives (Scraping)...")
-                import concurrent.futures as _cf
-                def _run_bank_scrape():
-                    scraper = BankForecastScraper()
-                    return scraper.scrape_all()
                 try:
-                    with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
-                        _fut = _ex.submit(_run_bank_scrape)
-                        try:
-                            results = _fut.result(timeout=90)  # 90s max pour tout le scraping
-                            if results:
-                                print(f"[OK] {len(results)} sources bancaires recuperees.")
-                        except _cf.TimeoutError:
-                            print("[WARN] Scraping bancaire timeout (90s) - passage a la suite.")
+                    scraper = BankForecastScraper()
+                    results = scraper.scrape_all()
+                    if results:
+                        # db_save_bank_forecasts est déjà appelé dans scrape_all avec le bon format
+                        # on a juste besoin de sauvegarder le raw cache si scrape_all ne le fait pas (mais il le fait)
+                        print(f"[OK] {len(results)} sources bancaires recuperees.")
                 except Exception as e:
                     print(f"[ERROR] Erreur scraping perspectives: {e}")
         
