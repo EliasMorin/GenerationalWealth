@@ -2145,13 +2145,12 @@ class TradeRepublicAPI:
         except Exception as e:
             print(f"[ERROR] WebSocket connection failed: {e}")
             if "401" in str(e) or "1000" in str(e) or "1006" in str(e) or "3003" in str(e):
-                print("[WARN] Session expirée (3003) - tentative de renouvellement automatique...")
-                TR_WS_ERROR = {"code": 3003, "message": "Session expirée - renouvellement automatique..."}
-                if not self.refresh_session_token():
-                    # Refresh échoué : effacer le token et lancer le re-login automatique
-                    self.save_session_token("")
-                    TR_WS_ERROR = {"code": 3003, "message": "Session expirée - reconnexion automatique en cours..."}
-                    threading.Thread(target=_auto_relogin, daemon=True).start()
+                print("[WARN] Session expirée (3003) - tentative de renouvellement silencieux...")
+                TR_WS_ERROR = {"code": 3003, "message": "Session expirée - renouvellement en cours..."}
+                if self.refresh_session_token():
+                    TR_WS_ERROR = {"code": None, "message": None}
+                else:
+                    TR_WS_ERROR = {"code": 3003, "message": "Session expirée. Veuillez vous reconnecter."}
             return False
 
     async def close(self):
@@ -2853,25 +2852,9 @@ live_thread = threading.Thread(target=run_live_updates, daemon=True)
 live_thread.start()
 
 
-def _auto_relogin():
-    """Re-login automatique avec les credentials stockés dans config.ini.
-    Envoie le SMS OTP sur le téléphone — l'utilisateur n'a qu'à saisir le code."""
-    try:
-        cfg = configparser.ConfigParser()
-        cfg.read("config.ini")
-        phone = cfg.get("secret", "phone_number", fallback=None)
-        pin   = cfg.get("secret", "pin",          fallback=None)
-        if phone and pin:
-            print(f"[AutoLogin] Re-login automatique pour {phone}...")
-            tr_api.initiate_login(phone, pin)
-        else:
-            print("[AutoLogin] Impossible : phone/pin absents de config.ini")
-    except Exception as e:
-        print(f"[AutoLogin] Erreur : {e}")
-
-
 def _session_watchdog():
-    """Surveille l'expiration des tokens TR et les renouvelle proactivement sans intervention."""
+    """Surveille l'expiration du tr_session et le renouvelle silencieusement via tr_refresh.
+    Le SMS OTP n'est JAMAIS envoyé automatiquement - uniquement via l'action manuelle de l'utilisateur."""
     print("[Watchdog] Démarrage du watchdog de session Trade Republic.")
     while True:
         try:
@@ -2881,24 +2864,16 @@ def _session_watchdog():
             refresh_tok = cfg.get("secret", "tr_refresh", fallback=None) or ""
             now = time.time()
 
-            if session_tok:
+            if session_tok and refresh_tok:
                 session_exp = _jwt_expiry(session_tok)
                 # Renouveler si expiré ou expire dans moins de 10 min
                 if session_exp and (session_exp - now) < 600:
                     remaining = max(0, int(session_exp - now))
-                    print(f"[Watchdog] tr_session expire dans {remaining}s - renouvellement proactif...")
-                    if not tr_api.refresh_session_token():
-                        # Refresh échoué : tenter re-login complet
-                        print("[Watchdog] Refresh échoué - tentative de re-login automatique...")
-                        _auto_relogin()
-
-            if refresh_tok:
-                refresh_exp = _jwt_expiry(refresh_tok)
-                # Re-login auto si tr_refresh expire dans moins de 5 min
-                if refresh_exp and (refresh_exp - now) < 300:
-                    remaining = max(0, int(refresh_exp - now))
-                    print(f"[Watchdog] tr_refresh expire dans {remaining}s - re-login automatique...")
-                    _auto_relogin()
+                    print(f"[Watchdog] tr_session expire dans {remaining}s - renouvellement silencieux via tr_refresh...")
+                    if tr_api.refresh_session_token():
+                        print("[Watchdog] Session renouvelée avec succès.")
+                    else:
+                        print("[Watchdog] Renouvellement échoué - l'utilisateur devra se reconnecter manuellement si nécessaire.")
 
         except Exception as e:
             print(f"[Watchdog] Erreur : {e}")
@@ -12436,11 +12411,10 @@ def background_tr_portfolio_loop():
                             loop.run_until_complete(local_api.fetch_history())
                         loop.run_until_complete(local_api.close())
                     else:
-                        print("[Background TR] Login failed or session invalid - trying token refresh...")
+                        print("[Background TR] Session invalide - tentative de renouvellement silencieux via tr_refresh...")
                         if not local_api.refresh_session_token():
-                            # Refresh échoué, effacer le token pour forcer le re-login
+                            print("[Background TR] Refresh échoué - nouvelle tentative dans 5 min.")
                             local_api.session_token = None
-                            threading.Thread(target=_auto_relogin, daemon=True).start()
                  except Exception as e:
                      print(f"Background TR Error: {e}")
                  finally:
