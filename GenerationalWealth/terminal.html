@@ -319,6 +319,53 @@
 
     /* ── Section spacing ── */
     .c-section { margin-bottom: 2rem; }
+
+    /* ======================================================
+       RESPONSIVE — Mobile & Tablet
+    ====================================================== */
+
+    /* Tables : scroll horizontal */
+    table { width: 100%; }
+    @media (max-width: 767px) {
+      table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    }
+
+    /* Protection overflow global */
+    .cotality-theme { overflow-x: hidden; }
+
+    /* ── Mobile < 640px ── */
+    @media (max-width: 639px) {
+      /* Nav dock : réduction de l'espacement */
+      .resp-nav-dock { gap: 0.25rem !important; padding: 0.375rem !important; }
+      .resp-nav-tab  { padding: 0.5rem 0.625rem !important; }
+
+      /* Contenu principal : moins de padding */
+      .resp-main { padding: 0.75rem !important; }
+
+      /* Sections : espacement réduit */
+      .c-section { margin-bottom: 1rem; }
+
+      /* Cards : padding réduit */
+      .c-card  { padding: 0.875rem !important; }
+
+      /* Height fixe Truth Social : adaptative */
+      .resp-ts-feed { height: 340px !important; }
+
+      /* Chat modal : plein écran */
+      .resp-chat-modal { width: 100vw !important; max-width: 100vw !important; height: 90vh !important; }
+    }
+
+    /* ── Tablet 640–1023px ── */
+    @media (min-width: 640px) and (max-width: 1023px) {
+      .resp-ts-feed { height: 440px !important; }
+      .resp-chat-modal { width: 90vw !important; max-width: 90vw !important; }
+    }
+
+    /* ── Portrait phone : empêcher débordement des cartes ── */
+    @media (max-width: 480px) {
+      .resp-overflow-hide { display: none !important; }
+      .resp-text-xs  { font-size: 0.7rem !important; }
+    }
   </style>
 </head>
 <body>
@@ -2387,7 +2434,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="w-full max-w-4xl h-[85vh] bg-white border border-slate-200 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="w-full max-w-4xl h-[90vh] md:h-[85vh] bg-white border border-slate-200 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 resp-chat-modal">
               {/* En-tête */}
               <div className="bg-slate-50 border-b border-slate-200 p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -8507,7 +8554,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
 
       /* ------------------- Rendu ------------------- */
       return (
-        <div className="cotality-theme min-h-screen text-slate-900 p-4 md:p-6 relative z-10 selection:bg-orange-100">
+        <div className="cotality-theme min-h-screen text-slate-900 p-3 sm:p-4 md:p-6 relative z-10 selection:bg-orange-100 resp-main">
           <div className="max-w-[1400px] mx-auto mb-6">
             <header className="flex flex-col md:flex-row items-center justify-between gap-6 mb-8 py-3 md:py-4 px-4 md:px-6 rounded-2xl border border-slate-200 bg-white" style={{boxShadow:'var(--c-shadow-sm)'}}>
               <div className="flex items-center gap-4 self-start md:self-center">
@@ -8515,7 +8562,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                    <Activity className="w-6 h-6 text-white" />
                  </div>
                  <div>
-                   <h1 className="text-3xl font-bold text-slate-900 tracking-tight leading-none">
+                   <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 tracking-tight leading-none">
                      GENERATIONAL<span className="text-[#d14d2b]">WEALTH</span>
                    </h1>
                    <div className="flex items-center gap-2 mt-1">
@@ -8533,7 +8580,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
               <div className="flex items-center gap-4 w-full md:w-auto justify-end">
                 
                 {/* Search Bar Intégrée */}
-                <div className="block w-72 relative"> {/* Rendu visible tout le temps */}
+                <div className="block w-full sm:w-48 md:w-64 lg:w-72 relative">
                     <StockSearch 
                         sectorTrends={sectorTrends} 
                         onSelect={handleExecuteSearch} 
@@ -8584,7 +8631,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                 
                 <div className="text-right pl-4">
                   <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-1">Portfolio Value</div>
-                  <div className="text-3xl font-bold font-mono text-slate-900 tracking-tight leading-none">
+                  <div className="text-lg sm:text-xl md:text-3xl font-bold font-mono text-slate-900 tracking-tight leading-none">
                     €{(portfolioMetrics.totalValue + portfolioData.cash).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                   </div>
                 </div>
@@ -8592,8 +8639,8 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             </header>
 
             {/* Navigation Deck (Modern Floating Dock) */}
-            <div className="sticky top-6 z-40 flex justify-center mb-12 px-4">
-              <div className="bg-white border border-slate-200 p-2 rounded-2xl flex items-center gap-2 overflow-x-auto max-w-full" style={{boxShadow:'var(--c-shadow)'}}>
+            <div className="sticky top-2 md:top-6 z-40 flex justify-center mb-4 md:mb-12 px-2 md:px-4">
+              <div className="bg-white border border-slate-200 p-1.5 md:p-2 rounded-2xl flex items-center gap-1 md:gap-2 overflow-x-auto max-w-full resp-nav-dock" style={{boxShadow:'var(--c-shadow)'}}>  
                 {[
                   { id: 'portfolio', icon: DollarSign, label: 'Portfolio' },
                   { id: 'technique', icon: Activity, label: 'Market View' },
@@ -8609,7 +8656,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={`
-                        relative px-5 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150 flex items-center gap-2.5 whitespace-nowrap
+                        relative px-3 py-2 md:px-5 md:py-2.5 rounded-xl text-xs md:text-sm font-medium transition-colors duration-150 flex items-center gap-1.5 md:gap-2.5 whitespace-nowrap resp-nav-tab
                         ${isActive 
                           ? 'bg-[#0F2443] text-white shadow-sm' 
                           : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'}
@@ -8628,7 +8675,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             {/* Chat Button Flottant (Indépendant du menu) */}
             <button
                 onClick={() => setIsChatOpen(!isChatOpen)}
-                className={`fixed bottom-8 right-8 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all duration-150 z-50 hover:scale-105 active:scale-95 ${
+                className={`fixed bottom-4 right-4 md:bottom-8 md:right-8 w-12 h-12 md:w-14 md:h-14 rounded-full shadow-lg flex items-center justify-center transition-all duration-150 z-50 hover:scale-105 active:scale-95 ${
                   isChatOpen 
                     ? 'bg-slate-700 hover:bg-slate-800 rotate-90 text-white' 
                     : 'bg-[#e35f3b] hover:bg-[#bd4625] text-white'
@@ -11520,7 +11567,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                     <div className="xl:col-span-1 space-y-6">
                         
                         {/* Donald Trump / Truth Social Feed */}
-                        <div className="bg-gradient-to-br from-[#0f172a] to-[#1e293b] rounded-2xl border border-slate-700 shadow-xl overflow-hidden flex flex-col h-[600px]">
+                        <div className="bg-gradient-to-br from-[#0f172a] to-[#1e293b] rounded-2xl border border-slate-700 shadow-xl overflow-hidden flex flex-col resp-ts-feed" style={{height: 'clamp(320px, 50vh, 600px)"}}>
                             <div className="p-5 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="relative">

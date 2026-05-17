@@ -9183,6 +9183,35 @@ def debug_clear_metadata():
     print("[DEBUG] Metadata cache cleared via API")
     return jsonify({'status': 'cleared'})
 
+@app.route('/api/debug/truth-social', methods=['GET'])
+def debug_truth_social():
+    """Test immédiat du scraper Truth Social avec logs détaillés"""
+    logs = []
+    try:
+        import requests as req_mod
+        account_id = '107780257626128497'
+        url = f'https://truthsocial.com/api/v1/accounts/{account_id}/statuses'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+        }
+        logs.append(f"Requête vers: {url}")
+        r = req_mod.get(url, headers=headers, params={'limit': 5}, timeout=30)
+        logs.append(f"HTTP status: {r.status_code}")
+        logs.append(f"Content-Type: {r.headers.get('Content-Type', '')}")
+        logs.append(f"Taille réponse: {len(r.content)} octets")
+        if r.status_code == 200:
+            data = r.json()
+            logs.append(f"Posts reçus: {len(data)}")
+            preview = [{'id': p.get('id'), 'content_snippet': (p.get('content','')[:100]), 'created_at': p.get('created_at')} for p in data[:3]]
+            return jsonify({'status': 'ok', 'logs': logs, 'preview': preview, 'db_count': len(db_load_generic('truth_social') or [])})
+        else:
+            logs.append(f"Erreur body: {r.text[:300]}")
+            return jsonify({'status': 'error', 'logs': logs, 'db_count': len(db_load_generic('truth_social') or [])})
+    except Exception as e:
+        logs.append(f"Exception: {str(e)}")
+        return jsonify({'status': 'exception', 'logs': logs, 'db_count': len(db_load_generic('truth_social') or [])})
+
 @app.route('/api/data/all', methods=['GET'])
 def get_all_data():
     """Récupère toutes les données en cache + prix en temps réel + données SQL"""
