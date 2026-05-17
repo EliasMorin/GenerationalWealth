@@ -1202,8 +1202,29 @@ class TruthSocialScraper:
         except Exception:
             return False
 
+    def _new_tor_circuit(self) -> bool:
+        """Demande un nouvel exit node Tor via le control port (9051)."""
+        import socket as _socket, time as _time
+        try:
+            s = _socket.socket()
+            s.settimeout(3)
+            s.connect(('127.0.0.1', 9051))
+            # Authentification vide (CookieAuthentication 0 ou HashedControlPassword vide)
+            s.sendall(b'AUTHENTICATE ""\r\nSIGNAL NEWNYM\r\nQUIT\r\n')
+            resp = s.recv(256)
+            s.close()
+            ok = b'250' in resp
+            print(f"TRUTH SOCIAL Tor NEWNYM: {'OK' if ok else 'FAIL'} ({resp[:40]})")
+            if ok:
+                _time.sleep(3)  # attendre que le nouveau circuit soit établi
+            return ok
+        except Exception as e:
+            print(f"TRUTH SOCIAL Tor NEWNYM error: {e}")
+            return False
+
     def _get_posts_via_tor(self, account_id: str, max_posts: int, playwright: bool = False):
         """Requête vers Truth Social via Tor SOCKS5 (change l'IP de sortie).
+        Rotation de circuit si 403 (jusqu'à 4 tentatives).
         Si playwright=True, lance Chromium headless via Tor pour passer le challenge JS.
         """
         if not self._tor_available():
@@ -1214,19 +1235,24 @@ class TruthSocialScraper:
         tor_proxy = 'socks5h://127.0.0.1:9050'
 
         if not playwright:
-            # Simple requests via Tor
             proxies = {'http': tor_proxy, 'https': tor_proxy}
             headers = {**self.headers, 'Accept': 'application/json'}
-            try:
-                r = requests.get(statuses_url, params={'limit': max_posts},
-                                 headers=headers, proxies=proxies, timeout=60)
-                print(f"TRUTH SOCIAL Tor requests: HTTP {r.status_code}")
-                if r.status_code == 200:
-                    data = r.json()
-                    print(f"TRUTH SOCIAL Tor: {len(data)} posts OK")
-                    return data
-            except Exception as e:
-                print(f"TRUTH SOCIAL Tor requests error: {e}")
+            for attempt in range(4):
+                try:
+                    r = requests.get(statuses_url, params={'limit': max_posts},
+                                     headers=headers, proxies=proxies, timeout=60)
+                    print(f"TRUTH SOCIAL Tor requests (essai {attempt+1}): HTTP {r.status_code}")
+                    if r.status_code == 200:
+                        data = r.json()
+                        print(f"TRUTH SOCIAL Tor: {len(data)} posts OK")
+                        return data
+                    # Mauvais exit node — on en demande un autre
+                    if attempt < 3:
+                        self._new_tor_circuit()
+                except Exception as e:
+                    print(f"TRUTH SOCIAL Tor requests error (essai {attempt+1}): {e}")
+                    if attempt < 3:
+                        self._new_tor_circuit()
             return []
 
         # Playwright via Tor proxy

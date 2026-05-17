@@ -59,8 +59,10 @@ python3 -m playwright install-deps chromium 2>/dev/null || true
 # ---- Tor (proxy SOCKS5 pour bypasser les blocages IP) ----
 echo "[5/5] Installation de Tor..."
 apt-get install -y tor
+# Activer le control port sans mot de passe (loopback uniquement)
+grep -q "ControlPort 9051" /etc/tor/torrc || echo -e "\nControlPort 9051\nCookieAuthentication 0" >> /etc/tor/torrc
 systemctl enable tor
-systemctl start tor
+systemctl restart tor
 
 echo ""
 echo "=== Setup terminé ==="
