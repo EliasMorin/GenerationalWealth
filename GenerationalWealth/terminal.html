@@ -3013,18 +3013,23 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             if (Array.isArray(data) && data.length > 0) {
               console.log(`[TruthSocial] ${data.length} posts (strategy ${i+1})`);
               const segments = parseTruthPosts(data);
-              // Push raw posts to backend cache asynchronously (fire & forget)
+              // Push raw posts to backend DB cache (fire & forget)
+              const storePosts = data.map(p => {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = p.content || '';
+                return {
+                  id: p.id, content: tmp.textContent || '', created_at: p.created_at,
+                  url: p.url, author: p.account?.display_name || 'Donald J. Trump',
+                  avatar: p.account?.avatar || null,
+                  reblogs_count: p.reblogs_count || 0, favourites_count: p.favourites_count || 0,
+                  media: (p.media_attachments || []).map(m => m.url), source: 'truth_social'
+                };
+              });
               fetch(API_BASE + '/api/truth-social/store', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(segments.map(s => ({
-                  id: data[segments.indexOf ? 0 : 0]?.id,
-                  content: s.raw_text, created_at: s.timestamp,
-                  url: s.url, author: 'Donald J. Trump', avatar: s.avatar,
-                  reblogs_count: s.reblogs_count, favourites_count: s.favourites_count,
-                  source: 'truth_social'
-                })))
-              }).catch(() => {});
+                body: JSON.stringify(storePosts)
+              }).then(r => r.ok && console.log('[TruthSocial] Posts stockés en DB')).catch(() => {});
               return segments;
             }
           } catch (e) {
