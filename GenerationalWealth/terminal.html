@@ -2951,12 +2951,79 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         }
       };
 
+      // Helper: parse Truth Social posts array into news segments
+      const parseTruthPosts = (posts) => posts
+        .filter(p => p && (p.content || p.media_attachments?.length))
+        .map(post => {
+          // Strip HTML tags from content
+          const tmp = document.createElement('div');
+          tmp.innerHTML = post.content || '';
+          const text = tmp.textContent || tmp.innerText || '';
+          return {
+            title: 'TRUTH SOCIAL: ' + (post.account?.display_name || 'Donald J. Trump'),
+            main_title: 'TRUTH SOCIAL: ' + (post.account?.display_name || 'Donald J. Trump'),
+            ai_summary: text,
+            summary: text,
+            raw_text: text,
+            timestamp: post.created_at,
+            tickers: [],
+            source: 'truth_social',
+            url: post.url,
+            avatar: post.account?.avatar || null,
+            fragment_count: 0,
+            reblogs_count: post.reblogs_count || 0,
+            favourites_count: post.favourites_count || 0,
+            media: (post.media_attachments || []).map(m => m.url),
+          };
+        });
+
+      // Fetch Truth Social posts: browser-direct first (bypasses VPS Cloudflare block),
+      // fallback to backend DB cache.
+      const fetchTruthPosts = async () => {
+        const TRUMP_ID = '107780257626128497';
+        const TS_URL = `https://truthsocial.com/api/v1/accounts/${TRUMP_ID}/statuses?limit=20`;
+        try {
+          const r = await fetch(TS_URL, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(15000)
+          });
+          if (r.ok) {
+            const data = await r.json();
+            if (Array.isArray(data) && data.length > 0) {
+              console.log(`[TruthSocial] ${data.length} posts via navigateur direct`);
+              return parseTruthPosts(data);
+            }
+          }
+        } catch (e) {
+          console.warn('[TruthSocial] Fetch direct échoué:', e.message);
+        }
+        // Fallback: backend DB cache
+        try {
+          const r = await fetch(API_BASE + '/api/data/truth_social');
+          if (r.ok) {
+            const data = await r.json();
+            if (Array.isArray(data) && data.length > 0) {
+              console.log(`[TruthSocial] ${data.length} posts via cache backend`);
+              return data.map(post => ({
+                title: 'TRUTH SOCIAL: ' + (post.author || 'Donald Trump'),
+                main_title: 'TRUTH SOCIAL: ' + (post.author || 'Donald Trump'),
+                ai_summary: post.content, summary: post.content, raw_text: post.content,
+                timestamp: post.created_at, tickers: [], source: 'truth_social',
+                url: post.url, avatar: post.avatar, fragment_count: 0,
+                ai_analysis_v2: post.ai_analysis_v2, sentiment_label: post.sentiment_label,
+                criticality_score: post.criticality_score, ai_reasoning: post.ai_reasoning
+              }));
+            }
+          }
+        } catch (e) { console.warn('[TruthSocial] Cache backend échoué:', e.message); }
+        return [];
+      };
+
       const loadBloombergData = async () => {
         try {
-          // Fetch both Bloomberg Live and Truth Social
-          const [liveRes, truthRes] = await Promise.all([
+          const [liveRes, truthSegments] = await Promise.all([
              fetch(API_BASE + '/api/data/bloomberg_live'),
-             fetch(API_BASE + '/api/data/truth_social')
+             fetchTruthPosts()
           ]);
           
           let combinedSegments = [];
@@ -2966,34 +3033,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
              if (data && data.news_segments) combinedSegments = [...data.news_segments];
           }
 
-          if (truthRes.ok) {
-             const truthData = await truthRes.json();
-             if (Array.isArray(truthData)) {
-                 const truthSegments = truthData.map(post => ({
-                     title: "TRUTH SOCIAL: " + (post.author || "Donald Trump"),
-                     main_title: "TRUTH SOCIAL: " + (post.author || "Donald Trump"),
-                     ai_summary: post.content,
-                     summary: post.content,
-                     raw_text: post.content,
-                     timestamp: post.created_at, // Keep original format for sorting or display
-                     tickers: [], 
-                     source: 'truth_social',
-                     url: post.url,
-                     avatar: post.avatar,
-                     fragment_count: 0,
-                     // MERGE AI ANALYSIS DATA
-                     ai_analysis_v2: post.ai_analysis_v2,
-                     sentiment_label: post.sentiment_label,
-                     criticality_score: post.criticality_score,
-                     ai_reasoning: post.ai_reasoning
-                 }));
-                 combinedSegments = [...combinedSegments, ...truthSegments];
-             }
-          }
-          
-          // Sort by timestamp (approximate since live doesn't always have full iso date?)
-          // Assuming live segments are recent.
-          
+          combinedSegments = [...combinedSegments, ...truthSegments];
           setBloombergNews({ news_segments: combinedSegments });
         } catch (err) {
           console.error('Erreur chargement News data:', err);

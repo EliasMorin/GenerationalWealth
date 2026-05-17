@@ -1155,26 +1155,29 @@ class TruthSocialScraper:
             print(f"TRUTH SOCIAL: Impossible de résoudre l'ID pour @{username}.")
             return []
 
-        # Fetch statuses directly using the account ID
-        try:
-            statuses_url = f"{self.base_url}/api/v1/accounts/{account_id}/statuses"
-            print(f"TRUTH SOCIAL: Requête statuses -> {statuses_url}")
-            r = requests.get(
-                statuses_url,
-                params={'limit': max_posts},
-                headers={**self.headers, 'Accept': 'application/json'},
-                timeout=30
-            )
-            print(f"TRUTH SOCIAL statuses: HTTP {r.status_code}, taille={len(r.content)} octets")
-            if r.status_code == 200:
-                data = r.json()
-                posts = self._parse_posts(data)
-                print(f"TRUTH SOCIAL: {len(posts)} posts récupérés.")
-                return posts
-            else:
-                print(f"TRUTH SOCIAL statuses error body: {r.text[:300]}")
-        except Exception as e:
-            print(f"TRUTH SOCIAL statuses exception: {e}")
+        # Fetch statuses using cloudscraper (handles Cloudflare) then requests fallback
+        api_headers = {
+            **self.headers,
+            'Accept': 'application/json',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'Referer': 'https://truthsocial.com/',
+        }
+        statuses_url = f"{self.base_url}/api/v1/accounts/{account_id}/statuses"
+        print(f"TRUTH SOCIAL: Requête statuses -> {statuses_url}")
+        for attempt, client in enumerate([self.scraper, requests.Session()]):
+            try:
+                r = client.get(statuses_url, params={'limit': max_posts}, headers=api_headers, timeout=30)
+                print(f"TRUTH SOCIAL statuses (attempt {attempt+1}): HTTP {r.status_code}, taille={len(r.content)} octets")
+                if r.status_code == 200:
+                    data = r.json()
+                    posts = self._parse_posts(data)
+                    print(f"TRUTH SOCIAL: {len(posts)} posts récupérés.")
+                    return posts
+                print(f"TRUTH SOCIAL statuses error body: {r.text[:200]}")
+            except Exception as e:
+                print(f"TRUTH SOCIAL statuses exception (attempt {attempt+1}): {e}")
 
         return []
     
@@ -9187,30 +9190,31 @@ def debug_clear_metadata():
 def debug_truth_social():
     """Test immédiat du scraper Truth Social avec logs détaillés"""
     logs = []
-    try:
-        import requests as req_mod
-        account_id = '107780257626128497'
-        url = f'https://truthsocial.com/api/v1/accounts/{account_id}/statuses'
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-        }
-        logs.append(f"Requête vers: {url}")
-        r = req_mod.get(url, headers=headers, params={'limit': 5}, timeout=30)
-        logs.append(f"HTTP status: {r.status_code}")
-        logs.append(f"Content-Type: {r.headers.get('Content-Type', '')}")
-        logs.append(f"Taille réponse: {len(r.content)} octets")
-        if r.status_code == 200:
-            data = r.json()
-            logs.append(f"Posts reçus: {len(data)}")
-            preview = [{'id': p.get('id'), 'content_snippet': (p.get('content','')[:100]), 'created_at': p.get('created_at')} for p in data[:3]]
-            return jsonify({'status': 'ok', 'logs': logs, 'preview': preview, 'db_count': len(db_load_generic('truth_social') or [])})
-        else:
-            logs.append(f"Erreur body: {r.text[:300]}")
-            return jsonify({'status': 'error', 'logs': logs, 'db_count': len(db_load_generic('truth_social') or [])})
-    except Exception as e:
-        logs.append(f"Exception: {str(e)}")
-        return jsonify({'status': 'exception', 'logs': logs, 'db_count': len(db_load_generic('truth_social') or [])})
+    account_id = '107780257626128497'
+    url = f'https://truthsocial.com/api/v1/accounts/{account_id}/statuses'
+    api_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://truthsocial.com/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+    }
+    for label, client in [('cloudscraper', cloudscraper.create_scraper(browser={'browser':'chrome','platform':'windows','mobile':False})), ('requests', requests.Session())]:
+        try:
+            logs.append(f"[{label}] Requête vers: {url}")
+            r = client.get(url, headers=api_headers, params={'limit': 5}, timeout=30)
+            logs.append(f"[{label}] HTTP {r.status_code}, taille={len(r.content)} octets")
+            if r.status_code == 200:
+                data = r.json()
+                logs.append(f"[{label}] Posts reçus: {len(data)}")
+                preview = [{'id': p.get('id'), 'snippet': p.get('content','')[:120], 'created_at': p.get('created_at')} for p in data[:3]]
+                return jsonify({'status': 'ok', 'method': label, 'logs': logs, 'preview': preview, 'db_count': len(db_load_generic('truth_social') or [])})
+            logs.append(f"[{label}] Erreur body: {r.text[:200]}")
+        except Exception as e:
+            logs.append(f"[{label}] Exception: {str(e)}")
+    return jsonify({'status': 'error', 'logs': logs, 'db_count': len(db_load_generic('truth_social') or [])})
 
 @app.route('/api/data/all', methods=['GET'])
 def get_all_data():
