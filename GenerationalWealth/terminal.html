@@ -2977,45 +2977,81 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
           };
         });
 
-      // Fetch Truth Social posts: browser-direct first (bypasses VPS Cloudflare block),
-      // fallback to backend DB cache.
+      // Fetch Truth Social posts: browser-direct → CORS proxies → backend DB cache
       const fetchTruthPosts = async () => {
         const TRUMP_ID = '107780257626128497';
-        const TS_URL = `https://truthsocial.com/api/v1/accounts/${TRUMP_ID}/statuses?limit=20`;
-        try {
-          const r = await fetch(TS_URL, {
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(15000)
-          });
-          if (r.ok) {
-            const data = await r.json();
+        const TS_PATH = `/api/v1/accounts/${TRUMP_ID}/statuses?limit=20`;
+        const TS_BASE = 'https://truthsocial.com';
+        const TS_URL  = TS_BASE + TS_PATH;
+
+        // Ordered list of fetch strategies
+        const strategies = [
+          // 1. Direct (works on residential IPs, no CORS issue since TruthSocial allows it)
+          async () => {
+            const r = await fetch(TS_URL, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(12000) });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          },
+          // 2. corsproxy.io
+          async () => {
+            const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(TS_URL)}`, { signal: AbortSignal.timeout(12000) });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          },
+          // 3. allorigins.win
+          async () => {
+            const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(TS_URL)}`, { signal: AbortSignal.timeout(12000) });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const wrapper = await r.json();
+            return JSON.parse(wrapper.contents);
+          },
+        ];
+
+        for (let i = 0; i < strategies.length; i++) {
+          try {
+            const data = await strategies[i]();
             if (Array.isArray(data) && data.length > 0) {
-              console.log(`[TruthSocial] ${data.length} posts via navigateur direct`);
-              return parseTruthPosts(data);
+              console.log(`[TruthSocial] ${data.length} posts (strategy ${i+1})`);
+              const segments = parseTruthPosts(data);
+              // Push raw posts to backend cache asynchronously (fire & forget)
+              fetch(API_BASE + '/api/truth-social/store', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(segments.map(s => ({
+                  id: data[segments.indexOf ? 0 : 0]?.id,
+                  content: s.raw_text, created_at: s.timestamp,
+                  url: s.url, author: 'Donald J. Trump', avatar: s.avatar,
+                  reblogs_count: s.reblogs_count, favourites_count: s.favourites_count,
+                  source: 'truth_social'
+                })))
+              }).catch(() => {});
+              return segments;
             }
+          } catch (e) {
+            console.warn(`[TruthSocial] Strategy ${i+1} failed:`, e.message);
           }
-        } catch (e) {
-          console.warn('[TruthSocial] Fetch direct échoué:', e.message);
         }
-        // Fallback: backend DB cache
+
+        // Final fallback: backend DB cache
         try {
           const r = await fetch(API_BASE + '/api/data/truth_social');
           if (r.ok) {
             const data = await r.json();
             if (Array.isArray(data) && data.length > 0) {
-              console.log(`[TruthSocial] ${data.length} posts via cache backend`);
+              console.log(`[TruthSocial] ${data.length} posts (cache backend)`);
               return data.map(post => ({
                 title: 'TRUTH SOCIAL: ' + (post.author || 'Donald Trump'),
                 main_title: 'TRUTH SOCIAL: ' + (post.author || 'Donald Trump'),
                 ai_summary: post.content, summary: post.content, raw_text: post.content,
                 timestamp: post.created_at, tickers: [], source: 'truth_social',
                 url: post.url, avatar: post.avatar, fragment_count: 0,
-                ai_analysis_v2: post.ai_analysis_v2, sentiment_label: post.sentiment_label,
-                criticality_score: post.criticality_score, ai_reasoning: post.ai_reasoning
+                reblogs_count: post.reblogs_count || 0, favourites_count: post.favourites_count || 0,
+                media: post.media || [],
               }));
             }
           }
-        } catch (e) { console.warn('[TruthSocial] Cache backend échoué:', e.message); }
+        } catch (e) { console.warn('[TruthSocial] Backend cache failed:', e.message); }
+        console.warn('[TruthSocial] All strategies failed.');
         return [];
       };
 

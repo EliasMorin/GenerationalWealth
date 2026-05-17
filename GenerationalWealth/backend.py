@@ -9216,6 +9216,25 @@ def debug_truth_social():
             logs.append(f"[{label}] Exception: {str(e)}")
     return jsonify({'status': 'error', 'logs': logs, 'db_count': len(db_load_generic('truth_social') or [])})
 
+@app.route('/api/truth-social/store', methods=['POST'])
+def truth_social_store():
+    """Reçoit des posts Truth Social depuis le navigateur et les stocke en DB cache."""
+    try:
+        posts = request.get_json(force=True)
+        if not isinstance(posts, list):
+            return jsonify({'error': 'expected array'}), 400
+        # Merge with existing, deduplicate on url/id
+        existing = db_load_generic('truth_social') or []
+        existing_ids = {p.get('url') or p.get('id') for p in existing}
+        new_posts = [p for p in posts if (p.get('url') or p.get('id')) not in existing_ids]
+        merged = new_posts + existing
+        merged = merged[:50]  # cap at 50
+        db_save_generic('truth_social', merged)
+        print(f"[TruthSocial] Stored {len(new_posts)} new posts from browser (total: {len(merged)})")
+        return jsonify({'stored': len(new_posts), 'total': len(merged)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/data/all', methods=['GET'])
 def get_all_data():
     """Récupère toutes les données en cache + prix en temps réel + données SQL"""
