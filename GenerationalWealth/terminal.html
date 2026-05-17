@@ -2959,11 +2959,11 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
           const tmp = document.createElement('div');
           tmp.innerHTML = post.content || '';
           let text = tmp.textContent || tmp.innerText || '';
-          // Fallback for image/video-only posts
+          // Fallback for image/video-only posts (text shown only if no media to render)
           if (!text.trim()) {
             const media = post.media_attachments || [];
-            if (media.some(m => m.type === 'video' || m.type === 'gifv')) text = '[Vidéo]';
-            else if (media.length > 0) text = '[Image]';
+            if (media.some(m => m.type === 'video' || m.type === 'gifv')) text = '🎥';
+            else if (media.length > 0) text = '';
             else text = '[Post sans texte]';
           }
           return {
@@ -11710,7 +11710,21 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                                                             </div>
                                                         ))}
                                                         
-                                                        {/* MEDIA RENDERING REMOVED FOR BREVITY (Assumed same) */}
+                                                        {/* Media: images et vidéos */}
+                                                        {post.media && post.media.length > 0 && (
+                                                            <div className={`mt-2 grid gap-1 ${post.media.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                                                {post.media.map((url, mi) =>
+                                                                    url && (url.endsWith('.mp4') || url.includes('/videos/') || url.includes('video')) ? (
+                                                                        <video key={mi} src={url} controls muted playsInline
+                                                                            className="rounded-lg w-full max-h-64 object-cover bg-black" />
+                                                                    ) : url ? (
+                                                                        <img key={mi} src={url} alt="media"
+                                                                            className="rounded-lg w-full max-h-64 object-cover cursor-pointer"
+                                                                            onClick={() => window.open(url, '_blank')} />
+                                                                    ) : null
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>

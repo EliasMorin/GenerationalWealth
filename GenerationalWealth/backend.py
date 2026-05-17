@@ -1319,10 +1319,10 @@ class TruthSocialScraper:
             # Fallback pour les posts sans texte (images uniquement)
             if not text_content:
                 media_types = [m.get('type', 'image') for m in post.get('media_attachments', [])]
-                if 'video' in media_types:
-                    text_content = '[Vidéo]'
+                if 'video' in media_types or 'gifv' in media_types:
+                    text_content = '\U0001f3a5'  # 🎥
                 elif media_urls:
-                    text_content = '[Image]'
+                    text_content = ''  # laisse vide, l'image s'affiche
                 else:
                     text_content = '[Post sans texte]'
 
