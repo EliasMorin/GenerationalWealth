@@ -1178,21 +1178,62 @@ class TruthSocialScraper:
             except Exception as e:
                 print(f"TRUTH SOCIAL statuses exception (attempt {attempt+1}): {e}")
 
-        # Strategy 2: Playwright headless browser (bypasses Cloudflare WAF)
-        print("TRUTH SOCIAL: Tentative via Playwright (bypass Cloudflare)...")
+        # Strategy 2: RSS Mastodon feed (endpoint différent, moins filtré par CF)
+        print("TRUTH SOCIAL: Tentative via flux RSS...")
+        rss_posts = self._get_posts_via_rss(username, max_posts)
+        if rss_posts:
+            return rss_posts
+
+        # Strategy 3: Playwright — charge la page du profil et intercepte les XHR
+        print("TRUTH SOCIAL: Tentative via Playwright (interception XHR)...")
         playwright_posts = self._get_posts_via_playwright(account_id, max_posts)
         if playwright_posts:
             return self._parse_posts(playwright_posts)
 
         return []
 
+    def _get_posts_via_rss(self, username: str, max_posts: int):
+        """Récupère les posts via le flux RSS Mastodon de Truth Social."""
+        import feedparser
+        rss_url = f"https://truthsocial.com/@{username}.rss"
+        print(f"TRUTH SOCIAL RSS: {rss_url}")
+        try:
+            feed = feedparser.parse(rss_url)
+            if feed.entries:
+                posts = []
+                for entry in feed.entries[:max_posts]:
+                    content_html = entry.get('summary', entry.get('title', ''))
+                    try:
+                        soup = BeautifulSoup(content_html, 'html.parser')
+                        text_content = soup.get_text().strip()
+                    except Exception:
+                        text_content = content_html
+                    posts.append({
+                        'id': entry.get('id', entry.get('link', '')),
+                        'created_at': entry.get('published', ''),
+                        'content': text_content,
+                        'url': entry.get('link', ''),
+                        'reblogs_count': 0,
+                        'favourites_count': 0,
+                        'replies_count': 0,
+                        'media': [],
+                        'source': 'truth_social',
+                        'author': 'Donald J. Trump',
+                        'avatar': None,
+                    })
+                print(f"TRUTH SOCIAL RSS: {len(posts)} posts OK")
+                return posts
+            print(f"TRUTH SOCIAL RSS: feed vide (status={feed.status if hasattr(feed, 'status') else '?'})")
+        except Exception as e:
+            print(f"TRUTH SOCIAL RSS error: {e}")
+        return []
+
     def _get_posts_via_playwright(self, account_id: str, max_posts: int):
-        """Lance un vrai Chromium pour contourner le blocage Cloudflare du VPS."""
+        """Charge la vraie page profil Truth Social et intercepte les XHR API (bypass Cloudflare)."""
         if sync_playwright is None:
             print("TRUTH SOCIAL Playwright: non disponible.")
             return []
-        import json as _json
-        url = f"https://truthsocial.com/api/v1/accounts/{account_id}/statuses?limit={max_posts}"
+        collected = []
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(
@@ -1205,24 +1246,34 @@ class TruthSocialScraper:
                     extra_http_headers={'Accept-Language': 'en-US,en;q=0.9'}
                 )
                 page = ctx.new_page()
-                # Visit homepage first to collect Cloudflare cookies
-                print("TRUTH SOCIAL Playwright: chargement homepage...")
+
+                def on_response(response):
+                    try:
+                        if '/api/v1/accounts/' in response.url and 'statuses' in response.url:
+                            body = response.json()
+                            if isinstance(body, list):
+                                collected.extend(body)
+                                print(f"TRUTH SOCIAL Playwright XHR: {len(body)} posts depuis {response.url[:80]}")
+                    except Exception:
+                        pass
+
+                page.on('response', on_response)
+
+                # Charge la vraie page du profil — le JS de la page fait lui-même les appels API
+                profile_url = 'https://truthsocial.com/@realDonaldTrump'
+                print(f"TRUTH SOCIAL Playwright: chargement profil {profile_url}")
                 try:
-                    page.goto('https://truthsocial.com', timeout=20000, wait_until='domcontentloaded')
-                    page.wait_for_timeout(2000)
+                    page.goto(profile_url, timeout=45000, wait_until='networkidle')
                 except Exception:
-                    pass
-                # Now fetch the JSON API
-                print(f"TRUTH SOCIAL Playwright: fetch API {url}")
-                response = page.goto(url, timeout=30000)
-                status = response.status if response else 0
-                print(f"TRUTH SOCIAL Playwright: HTTP {status}")
-                if status == 200:
-                    data = _json.loads(response.body())
-                    browser.close()
-                    print(f"TRUTH SOCIAL Playwright: {len(data)} posts OK")
-                    return data[:max_posts]
+                    pass  # networkidle timeout OK — les posts ont peut-être déjà été chargés
+
+                page.wait_for_timeout(3000)
                 browser.close()
+
+                if collected:
+                    print(f"TRUTH SOCIAL Playwright: {len(collected)} posts interceptés OK")
+                    return collected[:max_posts]
+                print("TRUTH SOCIAL Playwright: aucun post intercepté")
                 return []
         except Exception as e:
             print(f"TRUTH SOCIAL Playwright error: {e}")
