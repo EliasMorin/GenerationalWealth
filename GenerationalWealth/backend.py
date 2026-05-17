@@ -1115,69 +1115,66 @@ class TruthSocialScraper:
         
         self.base_url = "https://truthsocial.com"
     
+    # Known account IDs to skip the lookup step (avoids extra request that may fail)
+    KNOWN_ACCOUNT_IDS = {
+        'realDonaldTrump': '107780257626128497',
+        'realdonald trump': '107780257626128497',
+    }
+
     def get_user_posts(self, username: str, max_posts: int = 20):
         """
-        Récupère les posts via le flux RSS public (ne nécessite pas d'authentification).
-        Fallback sur l'API JSON si le RSS échoue.
+        Récupère les posts via l'API JSON publique de Truth Social (sans authentification).
+        Utilise l'ID de compte connu pour éviter le step lookup.
         """
-        username = username.replace('@', '')
+        username = username.replace('@', '').strip()
         print(f"TRUTH SOCIAL: Recuperation des posts de @{username}...")
 
-        # --- Méthode 1 : RSS public ---
-        try:
-            rss_url = f"{self.base_url}/@{username}.rss"
-            rss_response = self.scraper.get(rss_url, headers=self.headers, timeout=20)
-            if rss_response.status_code == 200:
-                feed = feedparser.parse(rss_response.text)
-                if feed.entries:
-                    posts = []
-                    for entry in feed.entries[:max_posts]:
-                        content_html = entry.get('summary', '') or entry.get('content', [{}])[0].get('value', '')
-                        try:
-                            text_content = BeautifulSoup(content_html, 'html.parser').get_text().strip()
-                        except Exception:
-                            text_content = content_html
-                        posts.append({
-                            'id': entry.get('id', entry.get('link', '')),
-                            'created_at': entry.get('published', ''),
-                            'content': text_content,
-                            'url': entry.get('link', ''),
-                            'reblogs_count': 0,
-                            'favourites_count': 0,
-                            'replies_count': 0,
-                            'media': [],
-                            'source': 'truth_social',
-                            'author': 'Donald J. Trump',
-                            'avatar': None,
-                        })
-                    print(f"TRUTH SOCIAL: {len(posts)} posts via RSS.")
-                    return posts
-        except Exception as e:
-            print(f"TRUTH SOCIAL RSS Error: {e}")
+        # Resolve account ID: use known map first, then try lookup
+        account_id = self.KNOWN_ACCOUNT_IDS.get(username) or self.KNOWN_ACCOUNT_IDS.get(username.lower())
 
-        # --- Méthode 2 : API JSON (fallback) ---
-        try:
-            api_url = f"{self.base_url}/api/v1/accounts/lookup?acct={username}"
-            api_response = self.scraper.get(api_url, headers={
-                **self.headers, 'Accept': 'application/json',
-            }, timeout=20)
+        if not account_id:
+            print(f"TRUTH SOCIAL: ID inconnu pour @{username}, tentative de lookup...")
+            try:
+                lookup_url = f"{self.base_url}/api/v1/accounts/lookup"
+                r = requests.get(
+                    lookup_url,
+                    params={'acct': username},
+                    headers={**self.headers, 'Accept': 'application/json'},
+                    timeout=20
+                )
+                print(f"TRUTH SOCIAL lookup: HTTP {r.status_code}")
+                if r.status_code == 200:
+                    account_id = r.json().get('id')
+                    print(f"TRUTH SOCIAL: ID trouvé via lookup: {account_id}")
+                else:
+                    print(f"TRUTH SOCIAL lookup body: {r.text[:200]}")
+            except Exception as e:
+                print(f"TRUTH SOCIAL lookup error: {e}")
 
-            if api_response.status_code == 200:
-                user_data = api_response.json()
-                user_id = user_data.get('id')
-                if user_id:
-                    posts_url = f"{self.base_url}/api/v1/accounts/{user_id}/statuses"
-                    posts_response = self.scraper.get(
-                        posts_url,
-                        headers={**self.headers, 'Accept': 'application/json'},
-                        params={'limit': max_posts},
-                        timeout=20
-                    )
-                    if posts_response.status_code == 200:
-                        return self._parse_posts(posts_response.json())
-            print(f"TRUTH SOCIAL API: HTTP {api_response.status_code} - non disponible.")
+        if not account_id:
+            print(f"TRUTH SOCIAL: Impossible de résoudre l'ID pour @{username}.")
+            return []
+
+        # Fetch statuses directly using the account ID
+        try:
+            statuses_url = f"{self.base_url}/api/v1/accounts/{account_id}/statuses"
+            print(f"TRUTH SOCIAL: Requête statuses -> {statuses_url}")
+            r = requests.get(
+                statuses_url,
+                params={'limit': max_posts},
+                headers={**self.headers, 'Accept': 'application/json'},
+                timeout=30
+            )
+            print(f"TRUTH SOCIAL statuses: HTTP {r.status_code}, taille={len(r.content)} octets")
+            if r.status_code == 200:
+                data = r.json()
+                posts = self._parse_posts(data)
+                print(f"TRUTH SOCIAL: {len(posts)} posts récupérés.")
+                return posts
+            else:
+                print(f"TRUTH SOCIAL statuses error body: {r.text[:300]}")
         except Exception as e:
-            print(f"TRUTH SOCIAL API Error: {e}")
+            print(f"TRUTH SOCIAL statuses exception: {e}")
 
         return []
     
