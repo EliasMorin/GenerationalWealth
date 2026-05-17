@@ -1117,44 +1117,69 @@ class TruthSocialScraper:
     
     def get_user_posts(self, username: str, max_posts: int = 20):
         """
-        Récupère les posts d'un utilisateur
+        Récupère les posts via le flux RSS public (ne nécessite pas d'authentification).
+        Fallback sur l'API JSON si le RSS échoue.
         """
         username = username.replace('@', '')
         print(f"TRUTH SOCIAL: Recuperation des posts de @{username}...")
-        
+
+        # --- Méthode 1 : RSS public ---
         try:
-            # Essayer de trouver l'API endpoint
+            rss_url = f"{self.base_url}/@{username}.rss"
+            rss_response = self.scraper.get(rss_url, headers=self.headers, timeout=20)
+            if rss_response.status_code == 200:
+                feed = feedparser.parse(rss_response.text)
+                if feed.entries:
+                    posts = []
+                    for entry in feed.entries[:max_posts]:
+                        content_html = entry.get('summary', '') or entry.get('content', [{}])[0].get('value', '')
+                        try:
+                            text_content = BeautifulSoup(content_html, 'html.parser').get_text().strip()
+                        except Exception:
+                            text_content = content_html
+                        posts.append({
+                            'id': entry.get('id', entry.get('link', '')),
+                            'created_at': entry.get('published', ''),
+                            'content': text_content,
+                            'url': entry.get('link', ''),
+                            'reblogs_count': 0,
+                            'favourites_count': 0,
+                            'replies_count': 0,
+                            'media': [],
+                            'source': 'truth_social',
+                            'author': 'Donald J. Trump',
+                            'avatar': None,
+                        })
+                    print(f"TRUTH SOCIAL: {len(posts)} posts via RSS.")
+                    return posts
+        except Exception as e:
+            print(f"TRUTH SOCIAL RSS Error: {e}")
+
+        # --- Méthode 2 : API JSON (fallback) ---
+        try:
             api_url = f"{self.base_url}/api/v1/accounts/lookup?acct={username}"
-            
             api_response = self.scraper.get(api_url, headers={
-                **self.headers,
-                'Accept': 'application/json',
-            }, timeout=30)
-            
+                **self.headers, 'Accept': 'application/json',
+            }, timeout=20)
+
             if api_response.status_code == 200:
                 user_data = api_response.json()
                 user_id = user_data.get('id')
-                
                 if user_id:
-                    # Récupérer les posts via l'API
                     posts_url = f"{self.base_url}/api/v1/accounts/{user_id}/statuses"
                     posts_response = self.scraper.get(
                         posts_url,
                         headers={**self.headers, 'Accept': 'application/json'},
                         params={'limit': max_posts},
-                        timeout=30
+                        timeout=20
                     )
-                    
                     if posts_response.status_code == 200:
-                        posts = posts_response.json()
-                        return self._parse_posts(posts)
-            
-            # Fallback simple si l'API échoue (pas d'implémentation complexe HTML ici pour éviter deps)
-            return []
-            
+                        return self._parse_posts(posts_response.json())
+            print(f"TRUTH SOCIAL API: HTTP {api_response.status_code} - non disponible.")
         except Exception as e:
-            print(f"TRUTH SOCIAL Error: {e}")
-            return []
+            print(f"TRUTH SOCIAL API Error: {e}")
+
+        return []
     
     def _parse_posts(self, posts_data):
         """Parse les données JSON des posts"""
@@ -13307,4 +13332,4 @@ def background_market_refresh():
 
 if __name__ == '__main__':
     threading.Thread(target=background_market_refresh, daemon=True).start()
-    app.run(host='0.0.0.0', port=32768, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
