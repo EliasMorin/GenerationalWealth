@@ -1288,6 +1288,18 @@ class TruthSocialScraper:
             except:
                 text_content = content_html
 
+            media_urls = [m.get('url') for m in post.get('media_attachments', [])]
+
+            # Fallback pour les posts sans texte (images uniquement)
+            if not text_content:
+                media_types = [m.get('type', 'image') for m in post.get('media_attachments', [])]
+                if 'video' in media_types:
+                    text_content = '[Vidéo]'
+                elif media_urls:
+                    text_content = '[Image]'
+                else:
+                    text_content = '[Post sans texte]'
+
             parsed_post = {
                 'id': post.get('id'),
                 'created_at': post.get('created_at'),
@@ -1296,7 +1308,7 @@ class TruthSocialScraper:
                 'reblogs_count': post.get('reblogs_count', 0),
                 'favourites_count': post.get('favourites_count', 0),
                 'replies_count': post.get('replies_count', 0),
-                'media': [m.get('url') for m in post.get('media_attachments', [])],
+                'media': media_urls,
                 'source': 'truth_social',
                 'author': 'Donald J. Trump',
                 'avatar': post.get('account', {}).get('avatar')
