@@ -1155,7 +1155,7 @@ class TruthSocialScraper:
             print(f"TRUTH SOCIAL: Impossible de résoudre l'ID pour @{username}.")
             return []
 
-        # Fetch statuses using cloudscraper (handles Cloudflare) then requests fallback
+        # Strategy 1: cloudscraper / requests
         api_headers = {
             **self.headers,
             'Accept': 'application/json',
@@ -1173,13 +1173,60 @@ class TruthSocialScraper:
                 if r.status_code == 200:
                     data = r.json()
                     posts = self._parse_posts(data)
-                    print(f"TRUTH SOCIAL: {len(posts)} posts récupérés.")
+                    print(f"TRUTH SOCIAL: {len(posts)} posts récupérés (requests).")
                     return posts
-                print(f"TRUTH SOCIAL statuses error body: {r.text[:200]}")
             except Exception as e:
                 print(f"TRUTH SOCIAL statuses exception (attempt {attempt+1}): {e}")
 
+        # Strategy 2: Playwright headless browser (bypasses Cloudflare WAF)
+        print("TRUTH SOCIAL: Tentative via Playwright (bypass Cloudflare)...")
+        playwright_posts = self._get_posts_via_playwright(account_id, max_posts)
+        if playwright_posts:
+            return self._parse_posts(playwright_posts)
+
         return []
+
+    def _get_posts_via_playwright(self, account_id: str, max_posts: int):
+        """Lance un vrai Chromium pour contourner le blocage Cloudflare du VPS."""
+        if sync_playwright is None:
+            print("TRUTH SOCIAL Playwright: non disponible.")
+            return []
+        import json as _json
+        url = f"https://truthsocial.com/api/v1/accounts/{account_id}/statuses?limit={max_posts}"
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage',
+                          '--disable-blink-features=AutomationControlled']
+                )
+                ctx = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    extra_http_headers={'Accept-Language': 'en-US,en;q=0.9'}
+                )
+                page = ctx.new_page()
+                # Visit homepage first to collect Cloudflare cookies
+                print("TRUTH SOCIAL Playwright: chargement homepage...")
+                try:
+                    page.goto('https://truthsocial.com', timeout=20000, wait_until='domcontentloaded')
+                    page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+                # Now fetch the JSON API
+                print(f"TRUTH SOCIAL Playwright: fetch API {url}")
+                response = page.goto(url, timeout=30000)
+                status = response.status if response else 0
+                print(f"TRUTH SOCIAL Playwright: HTTP {status}")
+                if status == 200:
+                    data = _json.loads(response.body())
+                    browser.close()
+                    print(f"TRUTH SOCIAL Playwright: {len(data)} posts OK")
+                    return data[:max_posts]
+                browser.close()
+                return []
+        except Exception as e:
+            print(f"TRUTH SOCIAL Playwright error: {e}")
+            return []
     
     def _parse_posts(self, posts_data):
         """Parse les données JSON des posts"""
