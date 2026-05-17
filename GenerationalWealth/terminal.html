@@ -366,6 +366,22 @@
       .resp-overflow-hide { display: none !important; }
       .resp-text-xs  { font-size: 0.7rem !important; }
     }
+
+    /* ── Header portfolio value : masqué sur mobile, compact sur tablette ── */
+    .resp-portfolio-val { display: none; }
+    @media (min-width: 640px) {
+      .resp-portfolio-val { display: block; }
+    }
+    @media (min-width: 640px) and (max-width: 1023px) {
+      .resp-portfolio-val .resp-pv-label { display: none; }
+      .resp-portfolio-val .resp-pv-amount { font-size: 0.9rem !important; }
+    }
+
+    /* ── Header droit : empêcher débordement sur mobile ── */
+    @media (max-width: 639px) {
+      .resp-header-right { flex-wrap: wrap; gap: 0.5rem !important; }
+      .resp-search-wrap  { width: 100% !important; order: 10; }
+    }
   </style>
 </head>
 <body>
@@ -8416,18 +8432,25 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         if (!forecast) return null;
         const analysis = analyses ? analyses.find(a => a.bank === forecast.bank) : null;
         const bankIcons = {
-            'JPMorgan': 'https://upload.wikimedia.org/wikipedia/commons/4/43/J_P_Morgan_Logo_2008_1.svg',
-            'BNP Paribas': 'https://upload.wikimedia.org/wikipedia/commons/6/6a/BNP_Paribas.svg',
-            'Société Générale': 'https://upload.wikimedia.org/wikipedia/commons/9/9d/Soci%C3%A9t%C3%A9_G%C3%A9n%C3%A9rale.svg',
-            'Deloitte': 'https://upload.wikimedia.org/wikipedia/commons/c/cc/Deloitte_old_blue_logo.svg',
-            'McKinsey': 'https://upload.wikimedia.org/wikipedia/commons/e/e2/McKinsey_and_Company_Logo_1.svg',
-            'Barclays': 'https://upload.wikimedia.org/wikipedia/commons/a/ad/Barclays-Logo.svg',
-            'BlackRock': 'https://upload.wikimedia.org/wikipedia/commons/8/85/BlackRock_wordmark.svg',
-            'Goldman Sachs': 'https://upload.wikimedia.org/wikipedia/commons/6/61/Goldman_Sachs.svg',
-            'Morgan Stanley': 'https://upload.wikimedia.org/wikipedia/commons/8/89/Morgan_Stanley_Logo_2024.png',
-            'UBS': 'https://upload.wikimedia.org/wikipedia/commons/9/98/UBS_Logo.png'
+            'JPMorgan':        'https://logo.clearbit.com/jpmorganchase.com',
+            'BNP Paribas':     'https://logo.clearbit.com/bnpparibas.com',
+            'Société Générale':'https://logo.clearbit.com/societegenerale.com',
+            'Deloitte':        'https://logo.clearbit.com/deloitte.com',
+            'McKinsey':        'https://logo.clearbit.com/mckinsey.com',
+            'Barclays':        'https://logo.clearbit.com/barclays.com',
+            'BlackRock':       'https://logo.clearbit.com/blackrock.com',
+            'Goldman Sachs':   'https://logo.clearbit.com/goldmansachs.com',
+            'Morgan Stanley':  'https://logo.clearbit.com/morganstanley.com',
+            'UBS':             'https://logo.clearbit.com/ubs.com',
+            'Deutsche Bank':   'https://logo.clearbit.com/db.com',
+            'HSBC':            'https://logo.clearbit.com/hsbc.com',
+            'Credit Suisse':   'https://logo.clearbit.com/credit-suisse.com',
+            'Citi':            'https://logo.clearbit.com/citigroup.com',
         };
         const logoUrl = bankIcons[forecast.bank];
+        const bankPalette = ['#1e40af','#065f46','#6d28d9','#92400e','#1e3a5f','#7f1d1d','#064e3b','#312e81'];
+        const bankColor = bankPalette[forecast.bank.charCodeAt(0) % bankPalette.length];
+        const bankInitials = forecast.bank.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
 
         return (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-400/50 backdrop-blur-sm" onClick={onClose}>
@@ -8435,8 +8458,12 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                {/* Header */}
                <div className="relative p-6 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                     <div className="w-16 h-16 bg-white rounded-xl p-2 flex items-center justify-center border border-slate-200 shadow-sm overflow-hidden">
-                        {logoUrl ? <img src={logoUrl} className="w-full h-full object-contain" /> : <span className="text-3xl">🏦</span>}
+                     <div className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 shadow-sm flex-shrink-0">
+                        {logoUrl
+                          ? <img src={logoUrl} alt={forecast.bank} className="w-full h-full object-cover"
+                              onError={e=>{ e.target.style.display='none'; e.target.parentElement.style.background=bankColor; e.target.parentElement.innerHTML=`<span style='color:#fff;font-weight:700;font-size:1.25rem;display:flex;align-items:center;justify-content:center;width:100%;height:100%'>${bankInitials}</span>`; }} />
+                          : <div style={{background:bankColor}} className="w-full h-full flex items-center justify-center"><span className="text-white font-bold text-xl">{bankInitials}</span></div>
+                        }
                      </div>
                      <div>
                         <h2 className="text-2xl font-bold text-slate-800">{forecast.bank}</h2>
@@ -8665,10 +8692,10 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                  </div>
               </div>
 
-              <div className="flex items-center gap-4 w-full md:w-auto justify-end">
+              <div className="flex items-center gap-4 w-full md:w-auto justify-end resp-header-right">
                 
                 {/* Search Bar Intégrée */}
-                <div className="block w-full sm:w-48 md:w-64 lg:w-72 relative">
+                <div className="block w-full sm:w-48 md:w-64 lg:w-72 relative resp-search-wrap">
                     <StockSearch 
                         sectorTrends={sectorTrends} 
                         onSelect={handleExecuteSearch} 
@@ -8717,9 +8744,9 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                     
                 </div>
                 
-                <div className="text-right pl-4">
-                  <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-1">Portfolio Value</div>
-                  <div className="text-lg sm:text-xl md:text-3xl font-bold font-mono text-slate-900 tracking-tight leading-none">
+                <div className="text-right pl-2 resp-portfolio-val">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-1 resp-pv-label">Portfolio Value</div>
+                  <div className="text-lg sm:text-xl md:text-3xl font-bold font-mono text-slate-900 tracking-tight leading-none resp-pv-amount">
                     €{(portfolioMetrics.totalValue + portfolioData.cash).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                   </div>
                 </div>
@@ -10010,40 +10037,38 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                           {bankForecasts
                             .filter(forecast => forecast.bank.toLowerCase().includes(bankSearchQuery.toLowerCase()))
                             .map((forecast, idx) => {
-                              const bankIcons = {
-                                'JPMorgan': 'https://upload.wikimedia.org/wikipedia/commons/4/43/J_P_Morgan_Logo_2008_1.svg',
-                                'BNP Paribas': 'https://upload.wikimedia.org/wikipedia/commons/6/6a/BNP_Paribas.svg',
-                                'Société Générale': 'https://upload.wikimedia.org/wikipedia/commons/9/9d/Soci%C3%A9t%C3%A9_G%C3%A9n%C3%A9rale.svg',
-                                'Deloitte': 'https://upload.wikimedia.org/wikipedia/commons/c/cc/Deloitte_old_blue_logo.svg',
-                                'McKinsey': 'https://upload.wikimedia.org/wikipedia/commons/e/e2/McKinsey_and_Company_Logo_1.svg',
-                                'Barclays': 'https://upload.wikimedia.org/wikipedia/commons/a/ad/Barclays-Logo.svg',
-                                'BlackRock': 'https://upload.wikimedia.org/wikipedia/commons/8/85/BlackRock_wordmark.svg',
-                                'Goldman Sachs': 'https://upload.wikimedia.org/wikipedia/commons/6/61/Goldman_Sachs.svg',
-                                'Morgan Stanley': 'https://upload.wikimedia.org/wikipedia/commons/8/89/Morgan_Stanley_Logo_2024.png',
-                                'UBS': 'https://upload.wikimedia.org/wikipedia/commons/9/98/UBS_Logo.png'
+                              const bankIconsT = {
+                                'JPMorgan':        'https://logo.clearbit.com/jpmorganchase.com',
+                                'BNP Paribas':     'https://logo.clearbit.com/bnpparibas.com',
+                                'Société Générale':'https://logo.clearbit.com/societegenerale.com',
+                                'Deloitte':        'https://logo.clearbit.com/deloitte.com',
+                                'McKinsey':        'https://logo.clearbit.com/mckinsey.com',
+                                'Barclays':        'https://logo.clearbit.com/barclays.com',
+                                'BlackRock':       'https://logo.clearbit.com/blackrock.com',
+                                'Goldman Sachs':   'https://logo.clearbit.com/goldmansachs.com',
+                                'Morgan Stanley':  'https://logo.clearbit.com/morganstanley.com',
+                                'UBS':             'https://logo.clearbit.com/ubs.com',
+                                'Deutsche Bank':   'https://logo.clearbit.com/db.com',
+                                'HSBC':            'https://logo.clearbit.com/hsbc.com',
+                                'Credit Suisse':   'https://logo.clearbit.com/credit-suisse.com',
+                                'Citi':            'https://logo.clearbit.com/citigroup.com',
                               };
-                              
-                              const logoUrl = bankIcons[forecast.bank];
+                              const logoUrlT = bankIconsT[forecast.bank];
+                              const tPalette = ['#1e40af','#065f46','#6d28d9','#92400e','#1e3a5f','#7f1d1d','#064e3b','#312e81'];
+                              const tColor = tPalette[forecast.bank.charCodeAt(0) % tPalette.length];
+                              const tInitials = forecast.bank.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
                               const analysis = bankAnalyses.find(a => a.bank === forecast.bank);
 
                               return (
                                 <tr key={idx} className="hover:bg-slate-50 transition-colors group cursor-pointer" onClick={() => setSelectedBankForecast(forecast)}>
                                   <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 bg-white rounded-lg p-1.5 flex items-center justify-center shadow-sm border border-slate-100 overflow-hidden flex-shrink-0">
-                                        {logoUrl ? (
-                                          <img 
-                                            src={logoUrl} 
-                                            alt={forecast.bank}
-                                            className="w-full h-full object-contain"
-                                            onError={(e) => {
-                                              e.target.style.display = 'none';
-                                              e.target.parentElement.innerHTML = '<span class="text-xl">🏦</span>';
-                                            }}
-                                          />
-                                        ) : (
-                                          <span className="text-xl">🏦</span>
-                                        )}
+                                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-100 shadow-sm flex-shrink-0">
+                                        {logoUrlT
+                                          ? <img src={logoUrlT} alt={forecast.bank} className="w-full h-full object-cover"
+                                              onError={e=>{ e.target.style.display='none'; e.target.parentElement.style.background=tColor; e.target.parentElement.innerHTML=`<span style='color:#fff;font-weight:700;font-size:0.8rem;display:flex;align-items:center;justify-content:center;width:100%;height:100%'>${tInitials}</span>`; }} />
+                                          : <div style={{background:tColor}} className="w-full h-full flex items-center justify-center"><span className="text-white font-bold text-sm">{tInitials}</span></div>
+                                        }
                                       </div>
                                       <span className="font-bold text-slate-800 text-base">{forecast.bank}</span>
                                     </div>
