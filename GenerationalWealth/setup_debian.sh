@@ -56,6 +56,12 @@ echo "[4/4] Installation des navigateurs Playwright..."
 python3 -m playwright install chromium
 python3 -m playwright install-deps chromium 2>/dev/null || true
 
+# ---- Tor (proxy SOCKS5 pour bypasser les blocages IP) ----
+echo "[5/5] Installation de Tor..."
+apt-get install -y tor
+systemctl enable tor
+systemctl start tor
+
 echo ""
 echo "=== Setup terminé ==="
 echo "Lancez le backend avec :"

@@ -5,6 +5,8 @@ flask-sqlalchemy
 
 # HTTP / Scraping
 requests
+requests[socks]
+PySocks
 cloudscraper
 beautifulsoup4
 feedparser

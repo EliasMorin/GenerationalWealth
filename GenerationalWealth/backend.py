@@ -1178,66 +1178,67 @@ class TruthSocialScraper:
             except Exception as e:
                 print(f"TRUTH SOCIAL statuses exception (attempt {attempt+1}): {e}")
 
-        # Strategy 2: RSS Mastodon feed (endpoint différent, moins filtré par CF)
-        print("TRUTH SOCIAL: Tentative via flux RSS...")
-        rss_posts = self._get_posts_via_rss(username, max_posts)
-        if rss_posts:
-            return rss_posts
+        # Strategy 2: requests via Tor SOCKS5 (change d'IP de sortie)
+        print("TRUTH SOCIAL: Tentative via Tor (SOCKS5)...")
+        tor_raw = self._get_posts_via_tor(account_id, max_posts, playwright=False)
+        if tor_raw:
+            return self._parse_posts(tor_raw)
 
-        # Strategy 3: Playwright — charge la page du profil et intercepte les XHR
-        print("TRUTH SOCIAL: Tentative via Playwright (interception XHR)...")
-        playwright_posts = self._get_posts_via_playwright(account_id, max_posts)
-        if playwright_posts:
-            return self._parse_posts(playwright_posts)
+        # Strategy 3: Playwright via Tor (passe aussi le challenge JS Cloudflare)
+        print("TRUTH SOCIAL: Tentative via Playwright+Tor...")
+        tor_raw = self._get_posts_via_tor(account_id, max_posts, playwright=True)
+        if tor_raw:
+            return self._parse_posts(tor_raw)
 
         return []
 
-    def _get_posts_via_rss(self, username: str, max_posts: int):
-        """Récupère les posts via le flux RSS Mastodon de Truth Social."""
-        import feedparser
-        rss_url = f"https://truthsocial.com/@{username}.rss"
-        print(f"TRUTH SOCIAL RSS: {rss_url}")
+    def _tor_available(self) -> bool:
+        """Vérifie que le daemon Tor écoute sur 127.0.0.1:9050."""
+        import socket
         try:
-            feed = feedparser.parse(rss_url)
-            if feed.entries:
-                posts = []
-                for entry in feed.entries[:max_posts]:
-                    content_html = entry.get('summary', entry.get('title', ''))
-                    try:
-                        soup = BeautifulSoup(content_html, 'html.parser')
-                        text_content = soup.get_text().strip()
-                    except Exception:
-                        text_content = content_html
-                    posts.append({
-                        'id': entry.get('id', entry.get('link', '')),
-                        'created_at': entry.get('published', ''),
-                        'content': text_content,
-                        'url': entry.get('link', ''),
-                        'reblogs_count': 0,
-                        'favourites_count': 0,
-                        'replies_count': 0,
-                        'media': [],
-                        'source': 'truth_social',
-                        'author': 'Donald J. Trump',
-                        'avatar': None,
-                    })
-                print(f"TRUTH SOCIAL RSS: {len(posts)} posts OK")
-                return posts
-            print(f"TRUTH SOCIAL RSS: feed vide (status={feed.status if hasattr(feed, 'status') else '?'})")
-        except Exception as e:
-            print(f"TRUTH SOCIAL RSS error: {e}")
-        return []
+            s = socket.create_connection(('127.0.0.1', 9050), timeout=2)
+            s.close()
+            return True
+        except Exception:
+            return False
 
-    def _get_posts_via_playwright(self, account_id: str, max_posts: int):
-        """Charge la vraie page profil Truth Social et intercepte les XHR API (bypass Cloudflare)."""
+    def _get_posts_via_tor(self, account_id: str, max_posts: int, playwright: bool = False):
+        """Requête vers Truth Social via Tor SOCKS5 (change l'IP de sortie).
+        Si playwright=True, lance Chromium headless via Tor pour passer le challenge JS.
+        """
+        if not self._tor_available():
+            print("TRUTH SOCIAL Tor: daemon Tor non disponible (installe-le: apt install tor)")
+            return []
+
+        statuses_url = f"https://truthsocial.com/api/v1/accounts/{account_id}/statuses"
+        tor_proxy = 'socks5h://127.0.0.1:9050'
+
+        if not playwright:
+            # Simple requests via Tor
+            proxies = {'http': tor_proxy, 'https': tor_proxy}
+            headers = {**self.headers, 'Accept': 'application/json'}
+            try:
+                r = requests.get(statuses_url, params={'limit': max_posts},
+                                 headers=headers, proxies=proxies, timeout=60)
+                print(f"TRUTH SOCIAL Tor requests: HTTP {r.status_code}")
+                if r.status_code == 200:
+                    data = r.json()
+                    print(f"TRUTH SOCIAL Tor: {len(data)} posts OK")
+                    return data
+            except Exception as e:
+                print(f"TRUTH SOCIAL Tor requests error: {e}")
+            return []
+
+        # Playwright via Tor proxy
         if sync_playwright is None:
-            print("TRUTH SOCIAL Playwright: non disponible.")
+            print("TRUTH SOCIAL Playwright+Tor: Playwright non disponible.")
             return []
         collected = []
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(
                     headless=True,
+                    proxy={'server': tor_proxy},
                     args=['--no-sandbox', '--disable-dev-shm-usage',
                           '--disable-blink-features=AutomationControlled']
                 )
@@ -1253,31 +1254,27 @@ class TruthSocialScraper:
                             body = response.json()
                             if isinstance(body, list):
                                 collected.extend(body)
-                                print(f"TRUTH SOCIAL Playwright XHR: {len(body)} posts depuis {response.url[:80]}")
+                                print(f"TRUTH SOCIAL Playwright+Tor XHR: {len(body)} posts")
                     except Exception:
                         pass
 
                 page.on('response', on_response)
-
-                # Charge la vraie page du profil — le JS de la page fait lui-même les appels API
-                profile_url = 'https://truthsocial.com/@realDonaldTrump'
-                print(f"TRUTH SOCIAL Playwright: chargement profil {profile_url}")
+                print("TRUTH SOCIAL Playwright+Tor: chargement profil...")
                 try:
-                    page.goto(profile_url, timeout=45000, wait_until='networkidle')
+                    page.goto('https://truthsocial.com/@realDonaldTrump',
+                              timeout=60000, wait_until='networkidle')
                 except Exception:
-                    pass  # networkidle timeout OK — les posts ont peut-être déjà été chargés
-
-                page.wait_for_timeout(3000)
+                    pass
+                page.wait_for_timeout(4000)
                 browser.close()
 
                 if collected:
-                    print(f"TRUTH SOCIAL Playwright: {len(collected)} posts interceptés OK")
+                    print(f"TRUTH SOCIAL Playwright+Tor: {len(collected)} posts interceptés OK")
                     return collected[:max_posts]
-                print("TRUTH SOCIAL Playwright: aucun post intercepté")
-                return []
+                print("TRUTH SOCIAL Playwright+Tor: aucun post intercepté")
         except Exception as e:
-            print(f"TRUTH SOCIAL Playwright error: {e}")
-            return []
+            print(f"TRUTH SOCIAL Playwright+Tor error: {e}")
+        return []
     
     def _parse_posts(self, posts_data):
         """Parse les données JSON des posts"""
