@@ -3396,7 +3396,7 @@ class CashAnalyzer:
             isin_match = re.search(r'logos/([A-Z0-9]{12})', icon_field)
             if isin_match:
                 isin = isin_match.group(1)
-                logo = f"https://assets.traderepublic.com/img/logos/{isin}/v2.png"
+                logo = f"https://assets.traderepublic.com/img/logos/{isin}/v2/dark.min.svg"
             else:
                 # Priority 2: match on raw title first, then cleaned merchant name
                 raw_title = str(row.get(raw_col, ''))

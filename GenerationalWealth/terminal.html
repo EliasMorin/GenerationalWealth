@@ -1409,7 +1409,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                         {selectedOption.trend > 0 ? <TrendingUp className="w-4 h-4"/> : <TrendingDown className="w-4 h-4"/>}
                      </div>
                      <div className="flex flex-col truncate">
-                        <span className="font-bold text-white truncate text-sm">{selectedOption.label.split('(')[0]}</span>
+                        <span className="font-bold text-slate-800 truncate text-sm">{selectedOption.label.split('(')[0]}</span>
                         <span className="text-[10px] text-slate-400 font-mono tracking-wide">
                            {selectedOption.count} ASSETS • {selectedOption.trend > 0 ? '+' : ''}{selectedOption.trend.toFixed(2)}%
                         </span>
@@ -7288,6 +7288,8 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
       const [bankAnalyses, setBankAnalyses] = useState([]);
       const [macroData, setMacroData] = useState(null);
       const [sectorTrends, setSectorTrends] = useState(null);
+      const [sectorRefreshLoading, setSectorRefreshLoading] = useState(false);
+      const sectorAutoRefreshedRef = React.useRef(false);
       const [bankForecastsLoading, setBankForecastsLoading] = useState(false);
       const [bankSearchQuery, setBankSearchQuery] = useState('');
       const [sentimentLoading, setSentimentLoading] = useState(false);
@@ -8393,6 +8395,22 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         }
       };
 
+      const refreshSectorTrends = async () => {
+        setSectorRefreshLoading(true);
+        try {
+          await fetch(API_BASE + '/api/sector-trends/refresh', { method: 'POST' });
+          addNotification("Mise à jour des secteurs lancée en arrière-plan...", "info");
+          // Re-fetch après un délai pour laisser le scraping démarrer
+          setTimeout(async () => {
+            await loadSectorTrends();
+            setSectorRefreshLoading(false);
+          }, 6000);
+        } catch (e) {
+          console.warn('Erreur refresh sector trends:', e);
+          setSectorRefreshLoading(false);
+        }
+      };
+
       const refreshPdfData = async () => {
           try {
               addNotification("Téléchargement et analyse du PDF en cours...", "info");
@@ -8424,6 +8442,21 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         
         return () => { mounted = false };
       }, []); // Empty dependency array = Run once on mount
+
+      // Auto-refresh sector trends if data is older than 4h
+      useEffect(() => {
+        if (!sectorTrends || sectorAutoRefreshedRef.current || sectorRefreshLoading) return;
+        const lastUpdates = Object.values(sectorTrends)
+          .map(d => d.last_updated).filter(Boolean).map(d => new Date(d));
+        if (lastUpdates.length === 0) return;
+        const mostRecent = new Date(Math.max(...lastUpdates));
+        const hoursSince = (Date.now() - mostRecent.getTime()) / (1000 * 60 * 60);
+        if (hoursSince >= 4) {
+          console.log(`[Secteurs] Données vieilles de ${hoursSince.toFixed(1)}h — relance automatique`);
+          sectorAutoRefreshedRef.current = true;
+          refreshSectorTrends();
+        }
+      }, [sectorTrends]); // eslint-disable-line react-hooks/exhaustive-deps
 
       // --- API FETCHERS ---
       // (Supposé que tout est géré localement dans les useEffect)
@@ -9026,18 +9059,41 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                 {sectorTrends && (
                   <div className="mb-6">
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 flex-wrap">
                         <PieChart className="w-5 h-5 text-indigo-600" />
-                        Top Secteurs 
+                        Top Secteurs
+                        {(() => {
+                          const lastUpdates = Object.values(sectorTrends)
+                            .map(d => d.last_updated).filter(Boolean).map(d => new Date(d));
+                          if (lastUpdates.length === 0) return null;
+                          const mostRecent = new Date(Math.max(...lastUpdates));
+                          const hoursSince = (Date.now() - mostRecent.getTime()) / (1000 * 60 * 60);
+                          const label = mostRecent.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                          return (
+                            <span className={`text-xs font-normal px-2 py-0.5 rounded-full ${hoursSince >= 4 ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>
+                              {hoursSince >= 4 ? '⚠ ' : ''}Màj : {label}
+                            </span>
+                          );
+                        })()}
                       </h3>
-                      {selectedSector && (
-                          <button 
-                             onClick={() => setSelectedSector(null)}
-                             className="text-xs text-indigo-600 hover:text-indigo-800 transition-colors font-medium border-b border-transparent hover:border-indigo-600"
-                          >
-                            Reset Filtres
-                          </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={refreshSectorTrends}
+                          disabled={sectorRefreshLoading}
+                          className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-lg transition-colors disabled:opacity-50 font-medium"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${sectorRefreshLoading ? 'animate-spin' : ''}`} />
+                          {sectorRefreshLoading ? 'Mise à jour...' : 'Actualiser'}
+                        </button>
+                        {selectedSector && (
+                            <button 
+                               onClick={() => setSelectedSector(null)}
+                               className="text-xs text-indigo-600 hover:text-indigo-800 transition-colors font-medium border-b border-transparent hover:border-indigo-600"
+                            >
+                              Reset Filtres
+                            </button>
+                        )}
+                      </div>
                     </div>
                     
                     <div className="relative z-20">
