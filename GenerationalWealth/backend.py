@@ -2303,11 +2303,19 @@ class TradeRepublicAPI:
         except Exception as e:
             print(f"[ERROR] WebSocket connection failed: {e}")
             if "401" in str(e) or "1000" in str(e) or "1006" in str(e) or "3003" in str(e):
-                print("[WARN] Session expirée (3003) - tentative de renouvellement silencieux...")
-                TR_WS_ERROR = {"code": 3003, "message": "Session expirée - renouvellement en cours..."}
-                if self.refresh_session_token():
-                    TR_WS_ERROR = {"code": None, "message": None}
+                global _last_ws_refresh_ts
+                now_ts = time.time()
+                if (now_ts - _last_ws_refresh_ts) >= _WS_REFRESH_COOLDOWN:
+                    print("[WARN] Session expirée (3003) - tentative de renouvellement silencieux...")
+                    TR_WS_ERROR = {"code": 3003, "message": "Session expirée - renouvellement en cours..."}
+                    _last_ws_refresh_ts = now_ts
+                    if self.refresh_session_token():
+                        TR_WS_ERROR = {"code": None, "message": None}
+                    else:
+                        TR_WS_ERROR = {"code": 3003, "message": "Session expirée. Veuillez vous reconnecter."}
                 else:
+                    remaining = int(_WS_REFRESH_COOLDOWN - (now_ts - _last_ws_refresh_ts))
+                    print(f"[WARN] WebSocket 3003 — refresh déjà tenté récemment, prochaine tentative dans {remaining}s")
                     TR_WS_ERROR = {"code": 3003, "message": "Session expirée. Veuillez vous reconnecter."}
             return False
 
@@ -2955,6 +2963,7 @@ def run_live_updates():
     
     async def loop_logic():
         print("[INFO] Starting Live Updates Loop (every 5s)...")
+        consecutive_failures = 0  # backoff counter
         while True:
              # Check credentials
              if not live_api.session_token:
@@ -2966,29 +2975,31 @@ def run_live_updates():
                  if token:
                      live_api.session_token = token
                      live_api.phone_number = phone # Critical: Update phone for db save context
+                     consecutive_failures = 0  # reset on new token
                  else:
                      print("[WAIT] Live Loop: Waiting for login...")
                      await asyncio.sleep(10)
                      continue
             
-             # Connect
+             # Connect with exponential backoff after repeated failures
              connected = await live_api.connect()
              if not connected:
+                 consecutive_failures += 1
+                 # Backoff: 10s → 30s → 60s → 120s (cap)
+                 delay = min(10 * (2 ** min(consecutive_failures - 1, 3)), 120)
                  if not live_api.session_token:
-                     print("[WAIT] Live Loop: Session cleared (3003 / expired). Please log in via the UI. Retrying in 15s...")
-                     await asyncio.sleep(15)
+                     print(f"[WAIT] Live Loop: Session cleared (3003/expired). Reconnect dans {delay}s...")
                  else:
-                     print("[WARN] Live Loop: Connection failed, retrying in 10s...")
-                     await asyncio.sleep(10)
+                     print(f"[WARN] Live Loop: Connection failed (#{consecutive_failures}), retry dans {delay}s...")
+                 await asyncio.sleep(delay)
                  continue
              
              # Fetch Loop
+             consecutive_failures = 0  # reset on successful connect
              while connected:
                  try:
                      # Silent fetch to avoid log spam, but keeps updating P&L
                      await live_api.fetch_portfolio(silent=True)
-                     # Removed explicit print to clear console
-                     # print(f"[TIME] Live Update: {datetime.now().strftime('%H:%M:%S')}")
                      await asyncio.sleep(5)
                  except Exception as e:
                      print(f"[ERROR] Live Loop Error: {e}")
@@ -3010,7 +3021,9 @@ live_thread = threading.Thread(target=run_live_updates, daemon=True)
 live_thread.start()
 
 
-_last_http_keepalive_ts = 0  # timestamp of last TR HTTP ping
+_last_http_keepalive_ts = 0   # timestamp of last TR HTTP ping
+_last_ws_refresh_ts   = 0.0  # rate-limit refresh attempts from WebSocket 3003 handler
+_WS_REFRESH_COOLDOWN  = 300  # seconds — don't retry refresh more often than every 5 min from WS
 
 
 def _tr_http_keepalive():

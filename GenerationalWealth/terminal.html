@@ -6252,73 +6252,37 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             grad.addColorStop(1, 'rgba(255,255,255,0)');
 
             // ── Market session event markers — auto-detected from data ────────────
-            // Instead of hardcoding exchange hours, we derive session open/close by
-            // analysing when the portfolio value actually starts / stops moving.
-            // This automatically reflects whatever mix of exchanges is in the portfolio
-            // (XETRA, NYSE, Euronext Paris, etc.) with no manual configuration.
+            // TR only returns data points during active trading hours — there are simply
+            // no data points for nights, weekends, and holidays (gaps in the timestamp array).
+            // So the reliable way to find session boundaries is to detect *time gaps* between
+            // consecutive labels, not value changes (which would be zero when markets are open
+            // but TR sends a flat price, which never happens — they just skip the night entirely).
             //
             // Algorithm:
-            //  1. Compute absolute % change between consecutive data points.
-            //  2. Smooth with a short window to suppress noise.
-            //  3. Adaptive threshold (10th-percentile of non-zero changes) separates
-            //     "market active" from "market closed / flat".
-            //  4. Flat→active transition = 🔔 open, active→flat = 🌙 close.
-            //     Long flat stretch inside an active day = overnight gap.
-            //  5. Only enabled for 1J / 5J (intraday resolution required).
+            //  1. Compute the median interval between consecutive timestamps.
+            //  2. Any gap ≥ 4× the median = closed market (overnight / weekend / holiday).
+            //  3. Start of a gap = 🌙 close, end of a gap = 🔔 open.
+            //  Only enabled for 1J / 5J (intraday resolution required).
             const sessionEvents = [];
-            if (['1d','5d'].includes(range) && labels.length >= 6) {
+            if (['1d','5d'].includes(range) && labels.length >= 4) {
                 const n = labels.length;
 
-                // Step 1 — per-point absolute % change
-                const changes = new Array(n).fill(0);
-                for (let i = 1; i < n; i++) {
-                    const v0 = values[i - 1];
-                    changes[i] = v0 !== 0 ? Math.abs((values[i] - v0) / v0) : 0;
-                }
+                // Step 1 — all inter-point intervals (ms)
+                const intervals = [];
+                for (let i = 1; i < n; i++) intervals.push(labels[i] - labels[i - 1]);
 
-                // Step 2 — smooth with a ±2-point window
-                const SMOOTH = 2;
-                const smoothed = new Array(n).fill(0);
-                for (let i = 0; i < n; i++) {
-                    let sum = 0, cnt = 0;
-                    for (let j = Math.max(0, i - SMOOTH); j <= Math.min(n - 1, i + SMOOTH); j++) {
-                        sum += changes[j]; cnt++;
-                    }
-                    smoothed[i] = cnt > 0 ? sum / cnt : 0;
-                }
+                // Step 2 — median interval (normal data cadence)
+                const sorted = [...intervals].sort((a, b) => a - b);
+                const medianInterval = sorted[Math.floor(sorted.length / 2)];
 
-                // Step 3 — adaptive threshold: 10th-percentile of non-zero values
-                const nonZero = smoothed.filter(c => c > 0).sort((a, b) => a - b);
-                if (nonZero.length >= 3) {
-                    const threshold = nonZero[Math.floor(nonZero.length * 0.10)];
-                    const active = smoothed.map(v => v >= threshold);
+                // Step 3 — gap threshold: 4× median, minimum 90 min
+                const gapThreshold = Math.max(medianInterval * 4, 90 * 60 * 1000);
 
-                    // Step 4 — transitions + overnight gap detection
-                    const totalMs = labels[n - 1] - labels[0];
-                    const overnightMs = totalMs * 0.08; // flat stretch ≥ 8% of range = overnight
-
-                    let flatStart = null;
-                    let wasActive = active[0];
-                    for (let i = 1; i < n; i++) {
-                        const curr = active[i];
-                        if (!wasActive && curr) {
-                            sessionEvents.push({ ts: labels[i], type: 'open', label: '🔔' });
-                            flatStart = null;
-                        } else if (wasActive && !curr) {
-                            flatStart = labels[i]; // potential close — confirm when gap is long enough
-                        } else if (!curr && flatStart !== null) {
-                            const gap = labels[i] - flatStart;
-                            if (gap >= overnightMs) {
-                                const dup = sessionEvents.some(e => e.type === 'close' && Math.abs(e.ts - flatStart) < 60000);
-                                if (!dup) sessionEvents.push({ ts: flatStart, type: 'close', label: '🌙' });
-                            }
-                        }
-                        wasActive = curr;
-                    }
-                    // Close at end if still flat
-                    if (!wasActive && flatStart !== null) {
-                        const dup = sessionEvents.some(e => e.type === 'close' && Math.abs(e.ts - flatStart) < 60000);
-                        if (!dup) sessionEvents.push({ ts: flatStart, type: 'close', label: '🌙' });
+                // Step 4 — walk intervals, emit events at boundaries
+                for (let i = 0; i < intervals.length; i++) {
+                    if (intervals[i] >= gapThreshold) {
+                        sessionEvents.push({ ts: labels[i],     type: 'close', label: '🌙' });
+                        sessionEvents.push({ ts: labels[i + 1], type: 'open',  label: '🔔' });
                     }
                 }
             }
