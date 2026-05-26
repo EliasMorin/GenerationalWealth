@@ -6250,6 +6250,110 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             const grad = ctx.createLinearGradient(0, 0, 0, 240);
             grad.addColorStop(0, isUp ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)');
             grad.addColorStop(1, 'rgba(255,255,255,0)');
+
+            // ── Market session event markers — auto-detected from data ────────────
+            // Instead of hardcoding exchange hours, we derive session open/close by
+            // analysing when the portfolio value actually starts / stops moving.
+            // This automatically reflects whatever mix of exchanges is in the portfolio
+            // (XETRA, NYSE, Euronext Paris, etc.) with no manual configuration.
+            //
+            // Algorithm:
+            //  1. Compute absolute % change between consecutive data points.
+            //  2. Smooth with a short window to suppress noise.
+            //  3. Adaptive threshold (10th-percentile of non-zero changes) separates
+            //     "market active" from "market closed / flat".
+            //  4. Flat→active transition = 🔔 open, active→flat = 🌙 close.
+            //     Long flat stretch inside an active day = overnight gap.
+            //  5. Only enabled for 1J / 5J (intraday resolution required).
+            const sessionEvents = [];
+            if (['1d','5d'].includes(range) && labels.length >= 6) {
+                const n = labels.length;
+
+                // Step 1 — per-point absolute % change
+                const changes = new Array(n).fill(0);
+                for (let i = 1; i < n; i++) {
+                    const v0 = values[i - 1];
+                    changes[i] = v0 !== 0 ? Math.abs((values[i] - v0) / v0) : 0;
+                }
+
+                // Step 2 — smooth with a ±2-point window
+                const SMOOTH = 2;
+                const smoothed = new Array(n).fill(0);
+                for (let i = 0; i < n; i++) {
+                    let sum = 0, cnt = 0;
+                    for (let j = Math.max(0, i - SMOOTH); j <= Math.min(n - 1, i + SMOOTH); j++) {
+                        sum += changes[j]; cnt++;
+                    }
+                    smoothed[i] = cnt > 0 ? sum / cnt : 0;
+                }
+
+                // Step 3 — adaptive threshold: 10th-percentile of non-zero values
+                const nonZero = smoothed.filter(c => c > 0).sort((a, b) => a - b);
+                if (nonZero.length >= 3) {
+                    const threshold = nonZero[Math.floor(nonZero.length * 0.10)];
+                    const active = smoothed.map(v => v >= threshold);
+
+                    // Step 4 — transitions + overnight gap detection
+                    const totalMs = labels[n - 1] - labels[0];
+                    const overnightMs = totalMs * 0.08; // flat stretch ≥ 8% of range = overnight
+
+                    let flatStart = null;
+                    let wasActive = active[0];
+                    for (let i = 1; i < n; i++) {
+                        const curr = active[i];
+                        if (!wasActive && curr) {
+                            sessionEvents.push({ ts: labels[i], type: 'open', label: '🔔' });
+                            flatStart = null;
+                        } else if (wasActive && !curr) {
+                            flatStart = labels[i]; // potential close — confirm when gap is long enough
+                        } else if (!curr && flatStart !== null) {
+                            const gap = labels[i] - flatStart;
+                            if (gap >= overnightMs) {
+                                const dup = sessionEvents.some(e => e.type === 'close' && Math.abs(e.ts - flatStart) < 60000);
+                                if (!dup) sessionEvents.push({ ts: flatStart, type: 'close', label: '🌙' });
+                            }
+                        }
+                        wasActive = curr;
+                    }
+                    // Close at end if still flat
+                    if (!wasActive && flatStart !== null) {
+                        const dup = sessionEvents.some(e => e.type === 'close' && Math.abs(e.ts - flatStart) < 60000);
+                        if (!dup) sessionEvents.push({ ts: flatStart, type: 'close', label: '🌙' });
+                    }
+                }
+            }
+            const marketEventsPlugin = {
+                id: 'marketEvents',
+                afterDraw(chart) {
+                    const { ctx: c, chartArea, scales } = chart;
+                    if (!chartArea || sessionEvents.length === 0) return;
+                    const xScale = scales.x;
+                    sessionEvents.forEach(evt => {
+                        const x = xScale.getPixelForValue(evt.ts);
+                        if (x < chartArea.left || x > chartArea.right) return;
+                        const lineColor = evt.type === 'open'    ? 'rgba(16,185,129,0.45)'
+                                        : evt.type === 'close'   ? 'rgba(100,116,139,0.35)'
+                                        : evt.type === 'pre'     ? 'rgba(245,158,11,0.35)'
+                                        : /* holiday */            'rgba(239,68,68,0.35)';
+                        c.save();
+                        c.beginPath();
+                        c.setLineDash([2, 4]);
+                        c.strokeStyle = lineColor;
+                        c.lineWidth = 1;
+                        c.moveTo(x, chartArea.top + 4);
+                        c.lineTo(x, chartArea.bottom - 14);
+                        c.stroke();
+                        c.setLineDash([]);
+                        c.font = '9px sans-serif';
+                        c.textAlign = 'center';
+                        c.globalAlpha = 0.7;
+                        c.fillText(evt.label, x, chartArea.bottom - 2);
+                        c.globalAlpha = 1;
+                        c.restore();
+                    });
+                }
+            };
+            // ────────────────────────────────────────────────────────────────────
             chartRef.current = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -6316,7 +6420,8 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                             border: { display: false }
                         }
                     }
-                }
+                },
+                plugins: [marketEventsPlugin],
             });
         }, [data]);
 
@@ -6423,6 +6528,13 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                         </div>
                     )}
                     <canvas ref={canvasRef} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', display: (loading || error) ? 'none' : 'block'}}></canvas>
+                    {/* Session legend — discreet, only for short ranges */}
+                    {!loading && !error && ['1d','5d'].includes(range) && (
+                        <div className="absolute bottom-1 left-3 flex items-center gap-3 text-[9px] text-slate-400 select-none pointer-events-none">
+                            <span>🔔 Ouverture</span>
+                            <span>🌙 Clôture / Nuit</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Cookie modal */}
@@ -8457,6 +8569,17 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
           refreshSectorTrends();
         }
       }, [sectorTrends]); // eslint-disable-line react-hooks/exhaustive-deps
+
+      // Keep-alive : ping TR toutes les 10 minutes pour maintenir la session HTTP côté serveur
+      useEffect(() => {
+        const ping = () => fetch(API_BASE + '/api/tr/keepalive', { method: 'POST' })
+          .then(r => r.json())
+          .then(d => console.log('[Keepalive] TR session ping:', d.status))
+          .catch(() => {});
+        ping(); // Ping immédiat au montage
+        const id = setInterval(ping, 10 * 60 * 1000); // Toutes les 10 min
+        return () => clearInterval(id);
+      }, []);
 
       // --- API FETCHERS ---
       // (Supposé que tout est géré localement dans les useEffect)
@@ -11594,7 +11717,19 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                         <p className="text-slate-500 mt-1">Analyse sémantique (FR) des flux Bloomberg et Truth Social</p>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                        {newsData?.fetched_at && (() => {
+                            const d = new Date(newsData.fetched_at);
+                            const mins = Math.round((Date.now() - d.getTime()) / 60000);
+                            const isStale = mins > 10;
+                            const label = d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                            return (
+                                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono ${isStale ? 'bg-orange-50 text-orange-600 border border-orange-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'}`}>
+                                    <span className={`w-2 h-2 rounded-full ${isStale ? 'bg-orange-400' : 'bg-emerald-500 animate-pulse'}`}></span>
+                                    {isStale ? `⚠ Màj il y a ${mins} min` : `Màj : ${label}`}
+                                </div>
+                            );
+                        })()}
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-xs font-mono">
                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                            AUTO-REFRESH (5m)

@@ -3010,8 +3010,52 @@ live_thread = threading.Thread(target=run_live_updates, daemon=True)
 live_thread.start()
 
 
+_last_http_keepalive_ts = 0  # timestamp of last TR HTTP ping
+
+
+def _tr_http_keepalive():
+    """Envoie une requête HTTP légère à Trade Republic pour maintenir le cookie de session côté serveur.
+    Le site TR utilise des sessions à expiration glissante : chaque requête HTTP renouvelle le cookie.
+    Un simple appel au chart 1d avec les cookies actuels suffit à simuler une navigation de page."""
+    global _last_http_keepalive_ts
+    try:
+        cfg = configparser.ConfigParser()
+        cfg.read("config.ini")
+        browser_cookies = cfg.get("secret", "tr_browser_cookies", fallback=None)
+        session_tok = cfg.get("secret", "tr_session", fallback=None)
+        if not browser_cookies and not session_tok:
+            return False  # Pas encore authentifié
+
+        sec_acc = tr_api.get_sec_acc_no()
+        if not sec_acc:
+            return False
+
+        url = f"https://api.traderepublic.com/api-gateway/portfolio-chart/v2/chart?secAccNo={sec_acc}&range=1d&currency=EUR"
+        cookie_header = browser_cookies if browser_cookies else f"tr_session={session_tok}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
+            "Cookie": cookie_header,
+            "Origin": "https://app.traderepublic.com",
+            "Referer": "https://app.traderepublic.com/",
+            "Accept": "*/*",
+        }
+        resp = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
+        _last_http_keepalive_ts = time.time()
+        if resp.status_code == 200:
+            print(f"[Keepalive] Ping TR HTTP OK ({resp.status_code}) — session prolongée.")
+            return True
+        else:
+            print(f"[Keepalive] Ping TR HTTP {resp.status_code} — session peut-être expirée.")
+            return False
+    except Exception as e:
+        print(f"[Keepalive] Erreur ping TR : {e}")
+        return False
+
+
 def _session_watchdog():
     """Surveille l'expiration du tr_session et le renouvelle silencieusement via tr_refresh.
+    Envoie également un ping HTTP périodique pour maintenir le cookie de session côté serveur TR
+    (simulation de navigation, comme le fait le site TR pour maintenir la session active).
     Le SMS OTP n'est JAMAIS envoyé automatiquement - uniquement via l'action manuelle de l'utilisateur."""
     print("[Watchdog] Démarrage du watchdog de session Trade Republic.")
     while True:
@@ -3022,10 +3066,10 @@ def _session_watchdog():
             refresh_tok = cfg.get("secret", "tr_refresh", fallback=None) or ""
             now = time.time()
 
-            if session_tok and refresh_tok:
+            if session_tok:
                 session_exp = _jwt_expiry(session_tok)
-                # Renouveler si expiré ou expire dans moins de 10 min
-                if session_exp and (session_exp - now) < 600:
+                # Renouveler si expiré ou expire dans moins de 30 min (proactif)
+                if refresh_tok and session_exp and (session_exp - now) < 1800:
                     remaining = max(0, int(session_exp - now))
                     print(f"[Watchdog] tr_session expire dans {remaining}s - renouvellement silencieux via tr_refresh...")
                     if tr_api.refresh_session_token():
@@ -3033,9 +3077,13 @@ def _session_watchdog():
                     else:
                         print("[Watchdog] Renouvellement échoué - l'utilisateur devra se reconnecter manuellement si nécessaire.")
 
+                # Ping HTTP toutes les 10 minutes pour maintenir le cookie serveur TR
+                if (now - _last_http_keepalive_ts) >= 600:
+                    _tr_http_keepalive()
+
         except Exception as e:
             print(f"[Watchdog] Erreur : {e}")
-        time.sleep(120)  # Vérification toutes les 2 minutes
+        time.sleep(60)  # Vérification toutes les minutes
 
 
 _watchdog_thread = threading.Thread(target=_session_watchdog, daemon=True)
@@ -6027,6 +6075,18 @@ def tr_refresh_session():
     if ok:
         return jsonify({"status": "ok", "message": "Session refreshed successfully."})
     return jsonify({"status": "error", "message": "Refresh failed — no refresh token or TR refused."}), 400
+
+
+@app.route('/api/tr/keepalive', methods=['POST'])
+def tr_keepalive():
+    """Envoie un ping HTTP à Trade Republic pour maintenir le cookie de session côté serveur."""
+    ok = _tr_http_keepalive()
+    ts = _last_http_keepalive_ts
+    return jsonify({
+        "status": "ok" if ok else "warn",
+        "pinged": ok,
+        "last_ping": datetime.fromtimestamp(ts).isoformat() if ts else None,
+    })
 
 
 @app.route('/api/tr-cookies', methods=['POST'])
@@ -12859,11 +12919,22 @@ def run_initial_loading_tasks():
 
 class NoCacheHTTPHandler(http.server.SimpleHTTPRequestHandler):
     """SimpleHTTPRequestHandler with Cache-Control: no-store to always serve fresh files."""
+
+    def do_GET(self):
+        # Redirect bare root to terminal.html
+        if self.path in ('/', ''):
+            self.send_response(302)
+            self.send_header('Location', '/terminal.html')
+            self.end_headers()
+            return
+        super().do_GET()
+
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
         super().end_headers()
+
     def log_message(self, format, *args):
         pass  # silence static server logs
 
