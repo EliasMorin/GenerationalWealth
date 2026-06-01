@@ -4449,6 +4449,14 @@ def get_assets_ai_analysis(ticker):
       2. Récupération et évolution des données réelles
       3. Risques actuels et signal de vente
     """
+    try:
+        return _get_assets_ai_analysis_inner(ticker)
+    except Exception as e:
+        import traceback
+        return jsonify({'status': 'error', 'message': f'Erreur interne: {e}', 'trace': traceback.format_exc()}), 500
+
+
+def _get_assets_ai_analysis_inner(ticker):
     ticker = ticker.upper().strip()
 
     # ── Collecte des données de base via yfinance ──────────────────────────
