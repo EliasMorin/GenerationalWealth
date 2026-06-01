@@ -4649,7 +4649,7 @@ def claude_status():
 @app.route('/api/claude/connect', methods=['POST', 'OPTIONS'])
 def claude_connect():
     """Sauvegarde et vérifie la session Claude.ai.
-    Body JSON: { session_key, org_id }
+    Body JSON: { session_key, org_id? }  — org_id est auto-récupéré si absent.
     """
     if request.method == 'OPTIONS':
         return '', 204
@@ -4659,17 +4659,36 @@ def claude_connect():
 
     if not session_key:
         return jsonify({"success": False, "error": "session_key manquant"}), 400
-    if not org_id:
-        return jsonify({"success": False, "error": "org_id manquant"}), 400
 
     device_id = str(uuid.uuid4())
+    headers = _build_claude_web_headers(session_key, device_id)
+
+    # Auto-récupère l'org_id si non fourni
+    if not org_id:
+        try:
+            resp = requests.get(
+                'https://claude.ai/api/organizations',
+                headers=headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            orgs = resp.json()
+            if isinstance(orgs, list) and orgs:
+                org_id = orgs[0].get('uuid') or orgs[0].get('id', '')
+        except requests.exceptions.HTTPError as e:
+            st = e.response.status_code if e.response is not None else '?'
+            return jsonify({"success": False, "error": f"Session invalide ou expirée (HTTP {st})"}), 401
+        except Exception as e:
+            return jsonify({"success": False, "error": f"Impossible de récupérer l'org_id : {e}"}), 500
+
+    if not org_id:
+        return jsonify({"success": False, "error": "org_id introuvable — session invalide ?"}), 400
+
     # Vérification rapide : créer une conversation de test
     try:
-        headers = _build_claude_web_headers(session_key, device_id)
         conv_id = _claude_web_create_conversation(org_id, headers)
-        # Si on arrive ici, la session est valide
         _save_claude_session(session_key, org_id, device_id)
-        return jsonify({"success": True, "conv_id": conv_id})
+        return jsonify({"success": True, "org_id": org_id, "conv_id": conv_id})
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else "?"
         if status == 401 or status == 403:
