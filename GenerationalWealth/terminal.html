@@ -12552,77 +12552,53 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         const [claudeStatus, setClaudeStatus] = React.useState(null);
         const [claudeLoading, setClaudeLoading] = React.useState(false);
         const [claudeMsg, setClaudeMsg] = React.useState({ type: '', text: '' });
-        const [browserLoginState, setBrowserLoginState] = React.useState(null); // null | {status, message, error}
-        const [showManualForm, setShowManualForm] = React.useState(false);
-        const [manualForm, setManualForm] = React.useState({ session_key: '', org_id: '' });
+        const [bookmarkletToken, setBookmarkletToken] = React.useState(null);
+        const [bookmarkletStatus, setBookmarkletStatus] = React.useState('idle'); // idle | waiting | success | error
         const pollRef = React.useRef(null);
 
-        // Charge le statut initial
         React.useEffect(() => {
             fetch(API_BASE + '/api/claude/status', { credentials: 'include' })
                 .then(r => r.json()).then(d => setClaudeStatus(d)).catch(() => {});
-            // Reset le state browser-login côté serveur au montage
-            fetch(API_BASE + '/api/claude/browser-login/reset', { method: 'POST', credentials: 'include' }).catch(() => {});
             return () => { if (pollRef.current) clearInterval(pollRef.current); };
         }, []);
 
-        // Connexion avec le sessionKey copié manuellement (seul champ nécessaire)
-        const handleBrowserLogin = async (e) => {
-            if (e) e.preventDefault();
-        };
-                // Polling toutes les 2s pour suivre l'état
+        // Génère un token et démarre l'attente
+        const handleStartBookmarklet = async () => {
+            setClaudeMsg({ type: '', text: '' });
+            setBookmarkletStatus('waiting');
+            try {
+                const res = await fetch(API_BASE + '/api/claude/bookmarklet/init', { method: 'POST', credentials: 'include' });
+                const data = await res.json();
+                if (!data.success) { setBookmarkletStatus('error'); setClaudeMsg({ type: 'error', text: data.error || 'Erreur init' }); return; }
+                setBookmarkletToken(data.token);
+                // Polling toutes les 2s
                 pollRef.current = setInterval(async () => {
                     try {
-                        const r = await fetch(API_BASE + '/api/claude/browser-login/status', { credentials: 'include' });
+                        const r = await fetch(API_BASE + '/api/claude/bookmarklet/poll?token=' + data.token, { credentials: 'include' });
                         const s = await r.json();
-                        setBrowserLoginState(s);
                         if (s.status === 'success') {
                             clearInterval(pollRef.current);
-                            setClaudeLoading(false);
-                            setClaudeStatus({ connected: true, org_id: '' });
-                            // Rafraîchit le statut complet
-                            fetch(API_BASE + '/api/claude/status', { credentials: 'include' })
-                                .then(rr => rr.json()).then(d => setClaudeStatus(d)).catch(() => {});
+                            setBookmarkletStatus('success');
+                            setClaudeStatus({ connected: true, org_id: s.org_id || '' });
+                            setClaudeMsg({ type: 'ok', text: '✓ Connecté à Claude.ai !' });
                         } else if (s.status === 'error') {
                             clearInterval(pollRef.current);
-                            setClaudeLoading(false);
+                            setBookmarkletStatus('error');
+                            setClaudeMsg({ type: 'error', text: s.error || 'Erreur lors de la connexion' });
                         }
-                    } catch (e) {}
+                    } catch (_) {}
                 }, 2000);
             } catch (err) {
-                setBrowserLoginState({ status: 'error', error: 'Erreur réseau' });
-                setClaudeLoading(false);
+                setBookmarkletStatus('error');
+                setClaudeMsg({ type: 'error', text: 'Erreur réseau' });
             }
         };
 
-        const handleManualConnect = async (e) => {
-            if (e) e.preventDefault();
-            if (!manualForm.session_key) {
-                setClaudeMsg({ type: 'error', text: 'sessionKey requis.' });
-                return;
-            }
-            setClaudeLoading(true);
+        const handleCancelBookmarklet = () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setBookmarkletToken(null);
+            setBookmarkletStatus('idle');
             setClaudeMsg({ type: '', text: '' });
-            try {
-                const res = await fetch(API_BASE + '/api/claude/connect', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ session_key: manualForm.session_key }),
-                });
-                const data = await res.json();
-                if (data.success) {
-                    setClaudeStatus({ connected: true, org_id: data.org_id || '' });
-                    setManualForm({ session_key: '', org_id: '' });
-                    setClaudeMsg({ type: 'ok', text: 'Connecté à Claude.ai ✓' });
-                } else {
-                    setClaudeMsg({ type: 'error', text: data.error || 'Connexion échouée' });
-                }
-            } catch (err) {
-                setClaudeMsg({ type: 'error', text: 'Erreur réseau' });
-            } finally {
-                setClaudeLoading(false);
-            }
         };
 
         const handleDisconnect = async () => {
@@ -12630,13 +12606,29 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             try {
                 await fetch(API_BASE + '/api/claude/disconnect', { method: 'POST', credentials: 'include' });
                 setClaudeStatus({ connected: false, org_id: '' });
-                setBrowserLoginState(null);
+                setBookmarkletToken(null);
+                setBookmarkletStatus('idle');
                 setClaudeMsg({ type: '', text: '' });
             } catch (err) {
                 setClaudeMsg({ type: 'error', text: 'Erreur réseau' });
             } finally {
                 setClaudeLoading(false);
             }
+        };
+
+        // Construit l'URL du signet (JS bookmarklet)
+        const buildBookmarkletHref = (token) => {
+            const submitUrl = API_BASE + '/api/claude/bookmarklet/submit';
+            const js = `(function(){` +
+                `var c=document.cookie.split(';').map(function(x){return x.trim()}).find(function(x){return x.startsWith('sessionKey=')});` +
+                `if(!c){alert('Pas de cookie sessionKey.\\nConnectez-vous d\\'abord à claude.ai avec votre compte Google.');return;}` +
+                `fetch('${submitUrl}',{method:'POST',headers:{'Content-Type':'application/json'},` +
+                `body:JSON.stringify({token:'${token}',session_key:c.slice(10)})})` +
+                `.then(function(r){return r.json()})` +
+                `.then(function(d){if(d.success){alert('✓ Connecté ! Retournez sur l\\'application.')}else{alert('Erreur: '+(d.error||'inconnue'))}})` +
+                `.catch(function(e){alert('Erreur réseau: '+e.message)})` +
+                `})()`;
+            return 'javascript:' + js;
         };
 
         const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -12676,7 +12668,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         return (
             <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm"
                  onClick={e => e.target === e.currentTarget && onClose()}>
-                <div style={{ width: '100%', maxWidth: 480, background: '#fff', borderRadius: 16, boxShadow: '0 25px 50px rgba(0,0,0,.2)', maxHeight: '90vh', overflowY: 'auto' }} className="m-4 p-8">
+                <div style={{ width: '100%', maxWidth: 500, background: '#fff', borderRadius: 16, boxShadow: '0 25px 50px rgba(0,0,0,.2)', maxHeight: '90vh', overflowY: 'auto' }} className="m-4 p-8">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-xl font-bold text-slate-900">Paramètres du compte</h2>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
@@ -12701,7 +12693,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                                         <div>
                                             <p className="text-sm font-semibold text-emerald-800">✓ Session active</p>
                                             {claudeStatus.org_id && <p className="text-xs text-emerald-600 mt-0.5 font-mono">{claudeStatus.org_id}</p>}
-                                            <p className="text-xs text-emerald-600 mt-1">L'analyse IA utilise Claude.ai directement (abonnement gratuit)</p>
+                                            <p className="text-xs text-emerald-600 mt-1">L'analyse IA utilise Claude.ai directement</p>
                                         </div>
                                         <button type="button" onClick={handleDisconnect} disabled={claudeLoading}
                                             className="text-xs text-red-500 hover:text-red-700 font-medium whitespace-nowrap">
@@ -12709,66 +12701,84 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                                         </button>
                                     </div>
                                 </div>
-                            ) : browserLoginState?.status === 'running' ? (
-                                /* En cours */
-                                <div className="bg-[#0F2443] rounded-xl p-4 flex flex-col items-center gap-3">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0"></div>
-                                        <p className="text-white text-sm font-medium">{browserLoginState.message || 'Connexion en cours…'}</p>
-                                    </div>
-                                    <p className="text-slate-400 text-xs text-center">Authentification automatique en cours (headless)…</p>
-                                    <button type="button" onClick={() => { if (pollRef.current) clearInterval(pollRef.current); setBrowserLoginState(null); setClaudeLoading(false); fetch(API_BASE + '/api/claude/browser-login/reset', { method: 'POST', credentials: 'include' }).catch(() => {}); }}
-                                        className="text-xs text-slate-400 hover:text-white underline">
-                                        Annuler
-                                    </button>
-                                </div>
-                            ) : (
-                                /* Non connecté — flow Google-compatible en 3 étapes */
-                                <div className="space-y-3">
-                                    {/* Étape 1 : ouvrir claude.ai */}
-                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Comment se connecter</p>
-                                        <ol className="space-y-2 text-sm text-slate-700">
-                                            <li className="flex gap-2">
-                                                <span className="w-5 h-5 rounded-full bg-[#0F2443] text-white text-xs flex items-center justify-center shrink-0 font-bold">1</span>
-                                                <span>Connectez-vous à Claude.ai dans votre navigateur (Google, email, etc.)
+
+                            ) : bookmarkletStatus === 'waiting' && bookmarkletToken ? (
+                                /* ── En attente que l'utilisateur clique le signet ── */
+                                <div className="space-y-4">
+                                    {/* Étapes */}
+                                    <div className="bg-[#0F2443] rounded-xl p-4 space-y-3">
+                                        <div className="flex items-center gap-2 text-white text-sm font-semibold">
+                                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0"></div>
+                                            En attente de votre connexion…
+                                        </div>
+                                        <ol className="space-y-2 text-sm text-slate-300 pl-1">
+                                            <li className="flex gap-2 items-start">
+                                                <span className="w-5 h-5 rounded-full bg-white/10 text-white text-xs flex items-center justify-center shrink-0 font-bold mt-0.5">1</span>
+                                                <span>
                                                     <a href="https://claude.ai" target="_blank" rel="noreferrer"
-                                                       className="ml-1 inline-flex items-center gap-1 text-blue-500 hover:underline font-medium">
-                                                        Ouvrir claude.ai ↗
+                                                       className="text-blue-300 hover:text-blue-200 underline font-medium">
+                                                        Ouvrez claude.ai ↗
                                                     </a>
+                                                    {' '}et connectez-vous avec Google
                                                 </span>
                                             </li>
-                                            <li className="flex gap-2">
-                                                <span className="w-5 h-5 rounded-full bg-[#0F2443] text-white text-xs flex items-center justify-center shrink-0 font-bold">2</span>
-                                                <span>Ouvrez les <strong>DevTools</strong> <kbd className="bg-slate-200 rounded px-1 text-xs">F12</kbd> → onglet <strong>Application</strong> → <strong>Cookies</strong> → <code className="bg-slate-200 rounded px-1">claude.ai</code> → copiez la valeur de <code className="bg-slate-200 rounded px-1">sessionKey</code></span>
-                                            </li>
-                                            <li className="flex gap-2">
-                                                <span className="w-5 h-5 rounded-full bg-[#0F2443] text-white text-xs flex items-center justify-center shrink-0 font-bold">3</span>
-                                                <span>Collez-la ci-dessous ↓</span>
+                                            <li className="flex gap-2 items-start">
+                                                <span className="w-5 h-5 rounded-full bg-white/10 text-white text-xs flex items-center justify-center shrink-0 font-bold mt-0.5">2</span>
+                                                <span>Une fois connecté, cliquez sur le signet ci-dessous depuis l'onglet claude.ai :</span>
                                             </li>
                                         </ol>
                                     </div>
 
-                                    {/* Champ sessionKey unique */}
-                                    <div className="space-y-2">
-                                        <input
-                                            type="password"
-                                            value={manualForm.session_key}
-                                            onChange={e => setManualForm(p => ({ ...p, session_key: e.target.value }))}
-                                            placeholder="sessionKey (sk-ant-sid02-…)"
-                                            className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-[#0F2443] outline-none bg-white"
-                                        />
-                                        <button type="button" onClick={handleManualConnect} disabled={claudeLoading || !manualForm.session_key}
-                                            className="w-full bg-[#0F2443] hover:bg-[#1B3A6B] text-white rounded-xl py-3 text-sm font-bold disabled:opacity-40 transition-all flex items-center justify-center gap-2">
-                                            {claudeLoading
-                                                ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Vérification…</>
-                                                : <>🔑 Connecter</>}
-                                        </button>
-                                        <p className="text-xs text-slate-400 text-center">L'org_id est récupéré automatiquement — seul le sessionKey est nécessaire</p>
+                                    {/* Signet à glisser */}
+                                    <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center space-y-2 bg-slate-50">
+                                        <p className="text-xs text-slate-500 font-medium">Glissez ce bouton dans votre barre de favoris :</p>
+                                        <a
+                                            href={buildBookmarkletHref(bookmarkletToken)}
+                                            className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow cursor-move select-none"
+                                            onClick={e => e.preventDefault()}
+                                            draggable="true"
+                                        >
+                                            🔑 Connecter à GW
+                                        </a>
+                                        <p className="text-xs text-slate-400">
+                                            Ou copiez-le et ajoutez-le manuellement comme signet
+                                        </p>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                            Puis <strong>cliquez ce signet</strong> depuis l'onglet claude.ai une fois connecté
+                                        </p>
                                     </div>
+
+                                    <button type="button" onClick={handleCancelBookmarklet}
+                                        className="w-full text-xs text-slate-400 hover:text-slate-600 py-1 underline">
+                                        Annuler
+                                    </button>
+                                </div>
+
+                            ) : bookmarkletStatus === 'success' ? (
+                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+                                    <p className="text-sm font-bold text-emerald-700">✓ Connecté à Claude.ai !</p>
+                                </div>
+
+                            ) : (
+                                /* ── Non connecté ── */
+                                <div className="space-y-3">
+                                    <button type="button" onClick={handleStartBookmarklet}
+                                        className="w-full bg-[#0F2443] hover:bg-[#1B3A6B] text-white rounded-xl py-3.5 text-sm font-bold transition-all flex items-center justify-center gap-2.5 shadow-lg">
+                                        <span className="text-lg">🤖</span>
+                                        Se connecter à Claude.ai
+                                    </button>
+                                    <p className="text-xs text-slate-400 text-center">
+                                        Fonctionne avec Google, email, ou tout autre méthode — un clic suffit
+                                    </p>
+                                    {bookmarkletStatus === 'error' && claudeMsg.text && (
+                                        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                                            <p className="text-xs text-red-700">{claudeMsg.text}</p>
+                                        </div>
+                                    )}
+                                </div>
                             )}
 
-                            {claudeMsg.text && (
+                            {claudeMsg.text && bookmarkletStatus !== 'error' && (
                                 <div className={`text-sm p-2.5 rounded-lg mt-2 ${claudeMsg.type === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                                     {claudeMsg.text}
                                 </div>

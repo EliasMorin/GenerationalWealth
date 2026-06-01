@@ -2,7 +2,7 @@ import sys
 import io
 import os
 
-from flask import Flask, jsonify, request, send_file, session as flask_session
+from flask import Flask, jsonify, request, send_file, session as flask_session, make_response
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import json
@@ -41,6 +41,7 @@ import collections
 import string
 import hashlib
 import uuid
+import secrets
 from urllib.parse import urljoin
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
@@ -4711,6 +4712,91 @@ def claude_disconnect():
 
 _browser_login_state: dict = {'status': 'idle', 'message': '', 'error': ''}
 _browser_login_lock = Lock()
+
+# ── Claude.ai bookmarklet SSO ─────────────────────────────────────────────────
+
+_bookmarklet_tokens: dict = {}  # token -> {status, created_at, org_id?, error?}
+_bookmarklet_lock = Lock()
+
+
+def _bookmarklet_cors(resp):
+    """Ajoute les headers CORS open pour l'endpoint bookmarklet (appel cross-origin depuis claude.ai)."""
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    return resp
+
+
+@app.route('/api/claude/bookmarklet/init', methods=['POST', 'OPTIONS'])
+def claude_bookmarklet_init():
+    """Génère un token one-use pour le flux bookmarklet."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with _bookmarklet_lock:
+        _bookmarklet_tokens[token] = {'status': 'pending', 'created_at': now}
+        # Nettoyage des tokens expirés (> 10 min)
+        expired = [t for t, v in list(_bookmarklet_tokens.items()) if now - v['created_at'] > 600]
+        for t in expired:
+            del _bookmarklet_tokens[t]
+    return jsonify({'success': True, 'token': token})
+
+
+@app.route('/api/claude/bookmarklet/submit', methods=['POST', 'OPTIONS'])
+def claude_bookmarklet_submit():
+    """Reçoit le sessionKey depuis le bookmarklet (appel cross-origin depuis claude.ai)."""
+    if request.method == 'OPTIONS':
+        return _bookmarklet_cors(make_response('', 204))
+
+    data = request.get_json(silent=True) or {}
+    token = (data.get('token') or '').strip()
+    session_key = (data.get('session_key') or '').strip()
+
+    if not token or not session_key:
+        return _bookmarklet_cors(make_response(jsonify({'success': False, 'error': 'token et session_key requis'}), 400))
+
+    with _bookmarklet_lock:
+        if token not in _bookmarklet_tokens or _bookmarklet_tokens[token]['status'] != 'pending':
+            return _bookmarklet_cors(make_response(jsonify({'success': False, 'error': 'Token invalide ou déjà utilisé'}), 400))
+
+    device_id = str(uuid.uuid4())
+    headers = _build_claude_web_headers(session_key, device_id)
+    org_id = ''
+    try:
+        r = requests.get('https://claude.ai/api/organizations', headers=headers, timeout=15)
+        r.raise_for_status()
+        orgs = r.json()
+        if isinstance(orgs, list) and orgs:
+            org_id = orgs[0].get('uuid') or orgs[0].get('id', '')
+    except Exception as e:
+        with _bookmarklet_lock:
+            if token in _bookmarklet_tokens:
+                _bookmarklet_tokens[token].update({'status': 'error', 'error': str(e)})
+        return _bookmarklet_cors(make_response(jsonify({'success': False, 'error': f'org_id introuvable: {e}'}), 500))
+
+    if not org_id:
+        with _bookmarklet_lock:
+            if token in _bookmarklet_tokens:
+                _bookmarklet_tokens[token].update({'status': 'error', 'error': 'org_id introuvable'})
+        return _bookmarklet_cors(make_response(jsonify({'success': False, 'error': 'org_id introuvable'}), 400))
+
+    _save_claude_session(session_key, org_id, device_id)
+    with _bookmarklet_lock:
+        if token in _bookmarklet_tokens:
+            _bookmarklet_tokens[token].update({'status': 'success', 'org_id': org_id})
+    return _bookmarklet_cors(make_response(jsonify({'success': True, 'org_id': org_id})))
+
+
+@app.route('/api/claude/bookmarklet/poll', methods=['GET'])
+def claude_bookmarklet_poll():
+    """Polling: retourne le statut du token bookmarklet."""
+    token = request.args.get('token', '').strip()
+    with _bookmarklet_lock:
+        info = dict(_bookmarklet_tokens.get(token, {}))
+    if not info:
+        return jsonify({'status': 'expired'})
+    return jsonify({'status': info.get('status', 'pending'), 'error': info.get('error', ''), 'org_id': info.get('org_id', '')})
 
 
 @app.route('/api/claude/browser-login/start', methods=['POST', 'OPTIONS'])
