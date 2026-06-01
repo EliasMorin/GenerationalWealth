@@ -4485,13 +4485,19 @@ def _get_assets_ai_analysis_inner(ticker):
         description = info.get('longBusinessSummary', '')[:600] if info.get('longBusinessSummary') else ''
 
         # Prix historique (1 an)
-        hist = yf.download(ticker, period='1y', interval='1mo', progress=False)
-        if isinstance(hist.columns, pd.MultiIndex):
-            try: price_series = hist['Close'][ticker]
-            except: price_series = hist.iloc[:, 0]
-        else:
-            price_series = hist['Close'] if 'Close' in hist.columns else hist.iloc[:, 0]
-        price_series = price_series.dropna()
+        try:
+            hist = yf.download(ticker, period='1y', interval='1mo', progress=False)
+            if hist is not None and not hist.empty and hist.columns is not None and len(hist.columns) > 0:
+                if isinstance(hist.columns, pd.MultiIndex):
+                    try: price_series = hist['Close'][ticker]
+                    except: price_series = hist.iloc[:, 0]
+                else:
+                    price_series = hist['Close'] if 'Close' in hist.columns else hist.iloc[:, 0]
+                price_series = price_series.dropna()
+            else:
+                price_series = pd.Series(dtype=float)
+        except Exception:
+            price_series = pd.Series(dtype=float)
 
         price_history = []
         for dt, p in price_series.items():
