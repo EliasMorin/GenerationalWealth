@@ -4326,8 +4326,17 @@ def get_assets_enriched(ticker):
 # Cache du token Copilot éphémère : {oauth_token: {'copilot_token': str, 'expires_at': float}}
 _copilot_token_cache: dict = {}
 
+def _load_copilot_oauth_token() -> str:
+    """Lit le token OAuth Copilot (obtenu via setup_copilot_token.py) depuis config.ini."""
+    try:
+        _cfg = configparser.ConfigParser()
+        _cfg.read("config.ini")
+        return _cfg.get("github", "copilot_token", fallback="").strip()
+    except Exception:
+        return ""
+
 def _get_copilot_token(oauth_token: str) -> tuple:
-    """Échange un token OAuth GitHub (gho_) contre un token Copilot éphémère.
+    """Échange un token OAuth GitHub (scopé Copilot) contre un token Copilot éphémère.
     Le token Copilot est valide ~30 min et accepté par api.githubcopilot.com."""
     import time
     cached = _copilot_token_cache.get(oauth_token)
@@ -4360,10 +4369,11 @@ def _get_copilot_token(oauth_token: str) -> tuple:
 
 def _call_claude(messages, max_tokens=2048):
     """Appelle Claude Sonnet 4.6 via GitHub Copilot API.
-    Échange d'abord le token OAuth (gho_) contre un token Copilot éphémère."""
-    oauth_token = _get_github_token_for_request()
+    Utilise copilot_token (obtenu via setup_copilot_token.py) en priorité."""
+    # Priorité : token OAuth Copilot dédié (setup_copilot_token.py)
+    oauth_token = _load_copilot_oauth_token() or _get_github_token_for_request()
     if not oauth_token:
-        return None, "GitHub token non configuré. Ajoutez api_token (gho_...) dans config.ini [github]."
+        return None, "Token Copilot non configuré. Exécutez setup_copilot_token.py sur le VPS."
 
     copilot_token, err = _get_copilot_token(oauth_token)
     if err:
