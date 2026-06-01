@@ -4410,6 +4410,36 @@ def _call_claude(messages, max_tokens=2048):
         return None, str(e)
 
 
+@app.route('/api/debug/copilot-models', methods=['GET'])
+def debug_copilot_models():
+    """Liste les modèles disponibles via l'API Copilot (debug)."""
+    oauth_token = _load_copilot_oauth_token() or _get_github_token_for_request()
+    if not oauth_token:
+        return jsonify({'error': 'No token configured'}), 400
+    copilot_token, err = _get_copilot_token(oauth_token)
+    if err:
+        return jsonify({'error': err}), 400
+    try:
+        resp = requests.get(
+            "https://api.githubcopilot.com/models",
+            headers={
+                "Authorization": f"Bearer {copilot_token}",
+                "Copilot-Integration-Id": "vscode-chat",
+                "editor-version": "vscode/1.96.0",
+                "editor-plugin-version": "copilot-chat/0.26.0",
+                "user-agent": "GitHubCopilotChat/0.26.0",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        models = [m.get('id') for m in data.get('data', [])]
+        claude_models = [m for m in models if m and 'claude' in m.lower()]
+        return jsonify({'all_models': models, 'claude_models': claude_models})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/assets/ai-analysis/<ticker>', methods=['GET'])
 def get_assets_ai_analysis(ticker):
     """
