@@ -919,7 +919,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         setLoading(true);
         setError(null);
         try {
-          const res = await fetch(API_BASE + '/api/auth/login', {
+          const res = await fetch(API_BASE + '/api/tr/login', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ phone: formData.phone, pin: formData.pin })
@@ -3508,7 +3508,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         setError('');
         
         try {
-            const res = await fetch(API_BASE + '/api/auth/login', {
+            const res = await fetch(API_BASE + '/api/tr/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
@@ -7399,9 +7399,9 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         addNotification
       } = useNotificationSystem(forexData, insiderData, optionsData, portfolioTickers);
 
-      // Auth Check & Handlers
+      // Auth Check & Handlers (TR session status)
       useEffect(() => {
-          fetch(API_BASE + '/api/auth/status')
+          fetch(API_BASE + '/api/tr/status')
              .then(r => r.json())
              .then(d => setIsLoggedIn(d.loggedIn))
              .catch(e => console.error("Auth status check failed", e))
@@ -7419,7 +7419,10 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
 
       const handleLogout = async () => {
           try {
+             // Logout from app session
              await fetch(API_BASE + '/api/auth/logout', { method: 'POST', credentials: 'include' });
+             // Also clear TR session
+             await fetch(API_BASE + '/api/tr/logout', { method: 'POST', credentials: 'include' });
           } catch(e) { console.error("Logout failed", e); }
           setIsLoggedIn(false);
           setShowUserMenu(false);
@@ -7451,7 +7454,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
       const handlePortfolioRefresh = async () => {
          try {
              // Check auth first
-             const r = await fetch(API_BASE + '/api/auth/status');
+             const r = await fetch(API_BASE + '/api/tr/status');
              const d = await r.json();
              
              if (!d.loggedIn) {

@@ -5498,8 +5498,8 @@ def update_market_data():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/auth/login', methods=['POST'])
-def auth_login():
+@app.route('/api/tr/login', methods=['POST'])
+def tr_login():
     data = request.json
     phone = data.get('phone')
     pin = data.get('pin')
@@ -5724,8 +5724,8 @@ def auth_resend():
     result = tr_api.resend_sms(process_id)
     return jsonify(result)
 
-@app.route('/api/auth/status', methods=['GET'])
-def auth_status():
+@app.route('/api/tr/status', methods=['GET'])
+def tr_status():
     # Reload config to check if token exists (in case it was updated externally)
     tr_api.config.read(tr_api.config_path)
     tr_api.session_token = tr_api.config.get("secret", "tr_session", fallback=None)
@@ -6775,8 +6775,8 @@ def get_portfolio_performance():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/auth/logout', methods=['POST'])
-def auth_logout():
+@app.route('/api/tr/logout', methods=['POST'])
+def tr_logout():
     tr_api.save_session_token("")
     return jsonify({"success": True})
 
