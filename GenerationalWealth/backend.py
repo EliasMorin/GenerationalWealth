@@ -4542,44 +4542,22 @@ def _get_assets_ai_analysis_inner(ticker):
 
     system_prompt = (
         "Tu es un analyste financier expert de haut niveau. "
-        "Tes analyses sont précises, structurées et basées sur des données concrètes. "
         "Réponds toujours en français, de manière claire et professionnelle. "
-        "Utilise des sections avec des titres en majuscules, des listes à puces, et des emojis pour rendre l'analyse lisible. "
-        "Fournis des données chiffrées précises quand tu en disposes."
+        "Utilise des sections avec des titres en majuscules, des listes à puces, et des emojis pour rendre l'analyse lisible."
     )
 
     # ── Préparer les 3 prompts ─────────────────────────────────────────────
     q1_messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": (
-            f"Si tu allais acheter {company_name} ({ticker}), "
-            f"quelles sont les données annexes et principales que tu étudierais ? "
-            f"Explique chaque métrique importante, son interprétation et son seuil critique pour ce type d'entreprise ({sector} / {industry})."
-        )}
+        {"role": "user", "content": f"Si vous alliez acheter {company_name}, quelles sont les données annexes et principales que vous étudierez ?"}
     ]
     q2_messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": (
-            f"Voici les données financières actuelles de {company_name} ({ticker}) :\n\n"
-            f"{financial_context}\n\n"
-            f"Analyse toutes ces données et leur évolution. "
-            f"Identifie les tendances positives et négatives, les signaux forts, "
-            f"et donne une évaluation chiffrée de la santé financière de l'entreprise. "
-            f"Structure ta réponse avec : 1) Analyse fondamentale, 2) Analyse du prix, 3) Signaux techniques, 4) Score global."
-        )}
+        {"role": "user", "content": f"Tu pourrais me récupérer toutes les données de {company_name} et son évolution ?"}
     ]
     q3_messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": (
-            f"Sur la base des données de {company_name} ({ticker}) :\n\n"
-            f"{financial_context}\n\n"
-            f"Réponds à ces deux questions de manière très précise et actionnable :\n"
-            f"1. RISQUES : Quels sont les risques actuels (macro, sectoriels, spécifiques à l'entreprise) ? "
-            f"Classe-les par probabilité et impact (Élevé/Moyen/Faible).\n"
-            f"2. QUAND VENDRE : Définis des niveaux de prix précis et des conditions de sortie. "
-            f"Indique le stop-loss recommandé, les objectifs de prise de profit, "
-            f"et les signaux fondamentaux qui doivent déclencher une vente."
-        )}
+        {"role": "user", "content": f"Quels sont les risques actuels pour {company_name} ? Quand vendre ?"}
     ]
 
     # ── Lancer les 3 appels Claude en parallèle ───────────────────────────
