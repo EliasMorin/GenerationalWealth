@@ -879,6 +879,14 @@ def _get_github_token_for_request():
             return user.github_token
     except Exception:
         pass
+    # Multi-comptes : distribue les tokens par hash d'IP
+    if GITHUB_TOKENS:
+        try:
+            ip = _get_client_ip()
+            idx = hash(ip) % len(GITHUB_TOKENS)
+            return GITHUB_TOKENS[idx]
+        except Exception:
+            pass
     return GITHUB_TOKEN
 
 
@@ -1319,21 +1327,39 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
-def _load_github_token():
-    """Lit le token GitHub depuis la variable d'environnement ou config.ini."""
-    key = os.environ.get("GITHUB_TOKEN", "")
-    if not key:
+def _load_github_tokens():
+    """Charge tous les tokens GitHub depuis l'env ou config.ini.
+    Supporte api_token, api_token_2, api_token_3, ... pour le multi-comptes."""
+    tokens = []
+    # Variable d'environnement (séparées par des virgules)
+    env_tokens = os.environ.get("GITHUB_TOKEN", "")
+    if env_tokens:
+        tokens = [t.strip() for t in env_tokens.split(',') if t.strip()]
+    if not tokens:
         try:
             _cfg = configparser.ConfigParser()
             _cfg.read("config.ini")
-            key = _cfg.get("github", "api_token", fallback="")
+            if _cfg.has_section("github"):
+                # Récupère api_token, api_token_2, api_token_3, ...
+                primary = _cfg.get("github", "api_token", fallback="").strip()
+                if primary:
+                    tokens.append(primary)
+                idx = 2
+                while True:
+                    key = _cfg.get("github", f"api_token_{idx}", fallback="").strip()
+                    if not key:
+                        break
+                    tokens.append(key)
+                    idx += 1
         except Exception:
             pass
-    return key
+    return tokens
 
-GITHUB_TOKEN = _load_github_token()
-GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
-GITHUB_CLAUDE_MODEL = "gpt-4o"
+GITHUB_TOKENS = _load_github_tokens()
+GITHUB_TOKEN = GITHUB_TOKENS[0] if GITHUB_TOKENS else ""
+# GitHub Copilot API — accès à Claude Sonnet 4.6 (inclus dans Copilot Pro)
+GITHUB_MODELS_URL = "https://api.githubcopilot.com/chat/completions"
+GITHUB_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 
 def _jwt_expiry(token):
@@ -4298,16 +4324,17 @@ def get_assets_enriched(ticker):
 # ============================================================================
 
 def _call_claude(messages, max_tokens=2048):
-    """Calls Claude Sonnet 4.6 via GitHub Models API. Returns the response text."""
+    """Calls Claude Sonnet 4.6 via GitHub Copilot API. Returns the response text."""
     token = _get_github_token_for_request()
     if not token:
-        return None, "GitHub token non configuré. Ajoutez-le dans les paramètres de votre compte."
+        return None, "GitHub token non configuré. Ajoutez un token Copilot dans config.ini [github]."
     try:
         resp = requests.post(
             GITHUB_MODELS_URL,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                "Copilot-Integration-Id": "vscode-chat",
             },
             json={
                 "model": GITHUB_CLAUDE_MODEL,

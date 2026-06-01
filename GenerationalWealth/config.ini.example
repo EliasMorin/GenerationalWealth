@@ -12,4 +12,8 @@ device_info =
 api_key = gsk_xxxxxxxxxxxxxxxxxxxx
 
 [github]
+; Token principal (compte 1)
 api_token = ghp_xxxxxxxxxxxxxxxxxxxx
+; Comptes supplémentaires (optionnel) — chaque IP utilisateur reçoit un token dédié
+; api_token_2 = ghp_yyyyyyyyyyyyyyyyyy
+; api_token_3 = ghp_zzzzzzzzzzzzzzzzzz
