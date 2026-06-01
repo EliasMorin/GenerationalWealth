@@ -4710,6 +4710,17 @@ def claude_browser_login_start():
         _browser_login_state.update({'status': 'running', 'message': 'Ouverture du navigateur…', 'error': ''})
 
     def _run_browser():
+        import os
+        # Vérifie si un display est disponible (nécessaire pour le mode headed)
+        has_display = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+        if not has_display:
+            with _browser_login_lock:
+                _browser_login_state.update({
+                    'status': 'error',
+                    'error': 'Aucun serveur d\'affichage détecté (serveur headless). Utilisez la connexion manuelle avec votre sessionKey.',
+                })
+            return
+
         try:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=False, args=['--no-sandbox'])
@@ -4776,8 +4787,11 @@ def claude_browser_login_start():
                 })
 
         except Exception as e:
+            err_str = str(e)
+            if 'XServer' in err_str or 'DISPLAY' in err_str or 'Missing X server' in err_str or 'platform failed to initialize' in err_str:
+                err_str = 'Aucun serveur d\'affichage (X server) disponible. Utilisez la connexion manuelle avec votre sessionKey.'
             with _browser_login_lock:
-                _browser_login_state.update({'status': 'error', 'error': str(e)})
+                _browser_login_state.update({'status': 'error', 'error': err_str})
 
     t = threading.Thread(target=_run_browser, daemon=True)
     t.start()
