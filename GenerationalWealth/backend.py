@@ -4696,63 +4696,105 @@ _browser_login_lock = Lock()
 
 @app.route('/api/claude/browser-login/start', methods=['POST', 'OPTIONS'])
 def claude_browser_login_start():
-    """Ouvre un navigateur Chromium pour que l'utilisateur se connecte à Claude.ai.
-    Capture automatiquement le sessionKey et l'org_id une fois connecté."""
+    """Automatise le login Claude.ai via Playwright headless.
+    Attend email et password dans le body JSON."""
     if request.method == 'OPTIONS':
         return '', 204
 
     if not PLAYWRIGHT_AVAILABLE:
         return jsonify({'success': False, 'error': 'Playwright non installé. Utilisez la connexion manuelle.'}), 400
 
+    body = request.get_json(silent=True) or {}
+    email = (body.get('email') or '').strip()
+    password = (body.get('password') or '').strip()
+    if not email or not password:
+        return jsonify({'success': False, 'error': 'Email et mot de passe requis.'}), 400
+
     with _browser_login_lock:
         if _browser_login_state['status'] == 'running':
             return jsonify({'success': True, 'status': 'already_running'})
-        _browser_login_state.update({'status': 'running', 'message': 'Ouverture du navigateur…', 'error': ''})
+        _browser_login_state.update({'status': 'running', 'message': 'Démarrage du navigateur headless…', 'error': ''})
 
-    def _run_browser():
-        import os
-        # Vérifie si un display est disponible (nécessaire pour le mode headed)
-        has_display = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
-        if not has_display:
-            with _browser_login_lock:
-                _browser_login_state.update({
-                    'status': 'error',
-                    'error': 'Aucun serveur d\'affichage détecté (serveur headless). Utilisez la connexion manuelle avec votre sessionKey.',
-                })
-            return
-
+    def _run_browser(email, password):
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=False, args=['--no-sandbox'])
-                ctx = browser.new_context()
+                browser = pw.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+                )
+                ctx = browser.new_context(
+                    user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    locale='fr-FR',
+                )
                 page = ctx.new_page()
-                page.goto('https://claude.ai/login', timeout=30000)
 
                 with _browser_login_lock:
-                    _browser_login_state['message'] = 'Connectez-vous à Claude.ai dans le navigateur…'
+                    _browser_login_state['message'] = 'Chargement de la page de connexion…'
 
-                # Attente du cookie sessionKey (max 3 minutes)
+                page.goto('https://claude.ai/login', wait_until='networkidle', timeout=45000)
+
+                with _browser_login_lock:
+                    _browser_login_state['message'] = 'Saisie de l\'email…'
+
+                # Étape 1 : champ email (peut être sur claude.ai ou accounts.anthropic.com)
+                email_sel = 'input[type="email"], input[name="email"], input[name="username"], input[autocomplete="email"]'
+                page.wait_for_selector(email_sel, timeout=15000)
+                page.fill(email_sel, email)
+
+                # Clic sur le bouton Continue/Submit
+                submit_sel = 'button[type="submit"], button:has-text("Continue"), button:has-text("Continuer"), button:has-text("Next")'
+                page.click(submit_sel, timeout=10000)
+
+                with _browser_login_lock:
+                    _browser_login_state['message'] = 'Saisie du mot de passe…'
+
+                # Étape 2 : champ mot de passe
+                try:
+                    page.wait_for_selector('input[type="password"]', timeout=15000)
+                    page.fill('input[type="password"]', password)
+                    page.click(submit_sel, timeout=10000)
+                except Exception:
+                    # Certains flux envoient un lien magique par email — on attend quand même le cookie
+                    with _browser_login_lock:
+                        _browser_login_state['message'] = 'Vérification du formulaire… (lien magique possible)'
+
+                with _browser_login_lock:
+                    _browser_login_state['message'] = 'Connexion en cours, attente de la session…'
+
+                # Attente du cookie sessionKey (max 90 secondes)
                 session_key = None
-                for _ in range(180):
+                for _ in range(90):
+                    # Vérifie si un message d'erreur est visible
+                    try:
+                        err_el = page.query_selector('[data-testid="error-message"], .error-message, [role="alert"]')
+                        if err_el:
+                            err_text = err_el.inner_text()
+                            if err_text and len(err_text) < 200:
+                                with _browser_login_lock:
+                                    _browser_login_state.update({'status': 'error', 'error': f'Erreur Claude.ai : {err_text}'})
+                                browser.close()
+                                return
+                    except Exception:
+                        pass
+
                     cookies = ctx.cookies('https://claude.ai')
                     session_key = next((c['value'] for c in cookies if c['name'] == 'sessionKey'), None)
                     if session_key:
                         break
                     time.sleep(1)
 
-                if not session_key:
-                    with _browser_login_lock:
-                        _browser_login_state.update({
-                            'status': 'error',
-                            'error': 'Timeout : connexion non détectée en 3 minutes.',
-                        })
-                    browser.close()
-                    return
-
-                with _browser_login_lock:
-                    _browser_login_state['message'] = 'Session détectée, récupération de l\'org_id…'
-
                 browser.close()
+
+            if not session_key:
+                with _browser_login_lock:
+                    _browser_login_state.update({
+                        'status': 'error',
+                        'error': 'Identifiants incorrects ou connexion refusée (vérifiez email/mot de passe).',
+                    })
+                return
+
+            with _browser_login_lock:
+                _browser_login_state['message'] = 'Session détectée, récupération de l\'org_id…'
 
             # Récupère l'org_id via l'API claude.ai
             device_id = str(uuid.uuid4())
@@ -4787,13 +4829,10 @@ def claude_browser_login_start():
                 })
 
         except Exception as e:
-            err_str = str(e)
-            if 'XServer' in err_str or 'DISPLAY' in err_str or 'Missing X server' in err_str or 'platform failed to initialize' in err_str:
-                err_str = 'Aucun serveur d\'affichage (X server) disponible. Utilisez la connexion manuelle avec votre sessionKey.'
             with _browser_login_lock:
-                _browser_login_state.update({'status': 'error', 'error': err_str})
+                _browser_login_state.update({'status': 'error', 'error': str(e)})
 
-    t = threading.Thread(target=_run_browser, daemon=True)
+    t = threading.Thread(target=_run_browser, args=(email, password), daemon=True)
     t.start()
     return jsonify({'success': True, 'status': 'started'})
 
