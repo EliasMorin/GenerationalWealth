@@ -1046,6 +1046,23 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
+def _load_github_token():
+    """Lit le token GitHub depuis la variable d'environnement ou config.ini."""
+    key = os.environ.get("GITHUB_TOKEN", "")
+    if not key:
+        try:
+            _cfg = configparser.ConfigParser()
+            _cfg.read("config.ini")
+            key = _cfg.get("github", "api_token", fallback="")
+        except Exception:
+            pass
+    return key
+
+GITHUB_TOKEN = _load_github_token()
+GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
+GITHUB_CLAUDE_MODEL = "claude-sonnet-4-6"
+
+
 def _jwt_expiry(token):
     """Retourne le timestamp d'expiration (exp) d'un JWT sans vérifier la signature.
     Retourne 0 en cas d'échec."""
@@ -4002,6 +4019,188 @@ def get_assets_enriched(ticker):
         print(f"[ENRICHED] Seasonality error for {ticker}: {e}")
 
     return jsonify(clean_for_json(result))
+
+# ============================================================================
+# AI ASSET ANALYSIS — GitHub Models API (Claude Sonnet 4.6)
+# ============================================================================
+
+def _call_claude(messages, max_tokens=2048):
+    """Calls Claude Sonnet 4.6 via GitHub Models API. Returns the response text."""
+    if not GITHUB_TOKEN:
+        return None, "GitHub token not configured. Add [github] api_token to config.ini."
+    try:
+        resp = requests.post(
+            GITHUB_MODELS_URL,
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": GITHUB_CLAUDE_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.7,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"], None
+    except requests.exceptions.HTTPError as e:
+        return None, f"API HTTP error: {e.response.status_code} — {e.response.text[:200]}"
+    except Exception as e:
+        return None, str(e)
+
+
+@app.route('/api/assets/ai-analysis/<ticker>', methods=['GET'])
+def get_assets_ai_analysis(ticker):
+    """
+    Analyse IA complète d'un actif via Claude Sonnet 4.6 (GitHub Models).
+    Effectue 3 analyses séquentielles :
+      1. Données clés à étudier avant d'acheter
+      2. Récupération et évolution des données réelles
+      3. Risques actuels et signal de vente
+    """
+    ticker = ticker.upper().strip()
+
+    # ── Collecte des données de base via yfinance ──────────────────────────
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        company_name = info.get('longName') or info.get('shortName') or ticker
+        sector = info.get('sector', 'Inconnu')
+        industry = info.get('industry', 'Inconnue')
+        country = info.get('country', 'Inconnu')
+        currency = info.get('currency', 'USD')
+        current_price = info.get('regularMarketPrice') or info.get('currentPrice') or info.get('previousClose')
+        market_cap = info.get('marketCap')
+        pe_ratio = info.get('trailingPE') or info.get('forwardPE')
+        eps = info.get('trailingEps')
+        revenue = info.get('totalRevenue')
+        net_income = info.get('netIncomeToCommon')
+        debt_equity = info.get('debtToEquity')
+        roe = info.get('returnOnEquity')
+        roa = info.get('returnOnAssets')
+        profit_margin = info.get('profitMargins')
+        dividend_yield = info.get('dividendYield')
+        beta = info.get('beta')
+        target_price = info.get('targetMeanPrice')
+        analyst_rec = info.get('recommendationKey', '')
+        description = info.get('longBusinessSummary', '')[:600] if info.get('longBusinessSummary') else ''
+
+        # Prix historique (1 an)
+        hist = yf.download(ticker, period='1y', interval='1mo', progress=False)
+        if isinstance(hist.columns, pd.MultiIndex):
+            try: price_series = hist['Close'][ticker]
+            except: price_series = hist.iloc[:, 0]
+        else:
+            price_series = hist['Close'] if 'Close' in hist.columns else hist.iloc[:, 0]
+        price_series = price_series.dropna()
+
+        price_history = []
+        for dt, p in price_series.items():
+            price_history.append({'date': str(dt)[:10], 'price': round(float(p), 2)})
+
+        perf_1y = None
+        if len(price_series) >= 2:
+            perf_1y = round((float(price_series.iloc[-1]) - float(price_series.iloc[0])) / float(price_series.iloc[0]) * 100, 2)
+
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Erreur yfinance pour {ticker}: {e}'}), 500
+
+    def fmt_num(v, suffix=''):
+        if v is None: return 'N/A'
+        if abs(v) >= 1e12: return f"{v/1e12:.2f}T{suffix}"
+        if abs(v) >= 1e9:  return f"{v/1e9:.2f}B{suffix}"
+        if abs(v) >= 1e6:  return f"{v/1e6:.2f}M{suffix}"
+        return f"{v:.2f}{suffix}"
+
+    # ── Contexte financier à fournir à l'IA ───────────────────────────────
+    financial_context = f"""Données actuelles pour {company_name} ({ticker}) :
+- Secteur : {sector} | Industrie : {industry} | Pays : {country}
+- Prix actuel : {fmt_num(current_price, f' {currency}')}
+- Capitalisation boursière : {fmt_num(market_cap)}
+- P/E Ratio : {fmt_num(pe_ratio)}
+- BPA (EPS) : {fmt_num(eps, f' {currency}')}
+- Revenus annuels : {fmt_num(revenue)}
+- Résultat net : {fmt_num(net_income)}
+- Dette/Capitaux propres : {fmt_num(debt_equity)}
+- ROE : {fmt_num(roe * 100 if roe else None, '%')}
+- ROA : {fmt_num(roa * 100 if roa else None, '%')}
+- Marge bénéficiaire nette : {fmt_num(profit_margin * 100 if profit_margin else None, '%')}
+- Rendement dividende : {fmt_num(dividend_yield * 100 if dividend_yield else None, '%')}
+- Bêta : {fmt_num(beta)}
+- Prix cible analystes : {fmt_num(target_price, f' {currency}')}
+- Recommandation analystes : {analyst_rec.upper() if analyst_rec else 'N/A'}
+- Performance 12 mois : {fmt_num(perf_1y, '%')}
+- Description : {description}
+
+Évolution du prix (12 derniers mois) :
+{chr(10).join([f"  {p['date']}: {p['price']} {currency}" for p in price_history[-12:]])}"""
+
+    system_prompt = (
+        "Tu es un analyste financier expert de haut niveau. "
+        "Tes analyses sont précises, structurées et basées sur des données concrètes. "
+        "Réponds toujours en français, de manière claire et professionnelle. "
+        "Utilise des sections avec des titres en majuscules, des listes à puces, et des emojis pour rendre l'analyse lisible. "
+        "Fournis des données chiffrées précises quand tu en disposes."
+    )
+
+    results = {}
+
+    # ── Question 1 : Données à étudier ────────────────────────────────────
+    q1_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": (
+            f"Si tu allais acheter {company_name} ({ticker}), "
+            f"quelles sont les données annexes et principales que tu étudierais ? "
+            f"Explique chaque métrique importante, son interprétation et son seuil critique pour ce type d'entreprise ({sector} / {industry})."
+        )}
+    ]
+    text1, err1 = _call_claude(q1_messages, max_tokens=1500)
+    results['what_to_study'] = {'text': text1, 'error': err1}
+
+    # ── Question 2 : Données réelles et évolution ─────────────────────────
+    q2_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": (
+            f"Voici les données financières actuelles de {company_name} ({ticker}) :\n\n"
+            f"{financial_context}\n\n"
+            f"Analyse toutes ces données et leur évolution. "
+            f"Identifie les tendances positives et négatives, les signaux forts, "
+            f"et donne une évaluation chiffrée de la santé financière de l'entreprise. "
+            f"Structure ta réponse avec : 1) Analyse fondamentale, 2) Analyse du prix, 3) Signaux techniques, 4) Score global."
+        )}
+    ]
+    text2, err2 = _call_claude(q2_messages, max_tokens=2000)
+    results['data_analysis'] = {'text': text2, 'error': err2, 'price_history': price_history}
+
+    # ── Question 3 : Risques et signal de vente ───────────────────────────
+    q3_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": (
+            f"Sur la base des données de {company_name} ({ticker}) :\n\n"
+            f"{financial_context}\n\n"
+            f"Réponds à ces deux questions de manière très précise et actionnable :\n"
+            f"1. RISQUES : Quels sont les risques actuels (macro, sectoriels, spécifiques à l'entreprise) ? "
+            f"Classe-les par probabilité et impact (Élevé/Moyen/Faible).\n"
+            f"2. QUAND VENDRE : Définis des niveaux de prix précis et des conditions de sortie. "
+            f"Indique le stop-loss recommandé, les objectifs de prise de profit, "
+            f"et les signaux fondamentaux qui doivent déclencher une vente."
+        )}
+    ]
+    text3, err3 = _call_claude(q3_messages, max_tokens=1500)
+    results['risks_and_exit'] = {'text': text3, 'error': err3}
+
+    return jsonify({
+        'status': 'success',
+        'ticker': ticker,
+        'company_name': company_name,
+        'current_price': current_price,
+        'currency': currency,
+        'price_history': price_history,
+        'analyses': results
+    })
 
 # ============================================================================
 # GLOBAL MARKET DATA (Moved from ez.py)

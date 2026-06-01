@@ -10,3 +10,6 @@ device_info =
 
 [groq]
 api_key = gsk_xxxxxxxxxxxxxxxxxxxx
+
+[github]
+api_token = ghp_xxxxxxxxxxxxxxxxxxxx

@@ -8175,12 +8175,20 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
       const [assetsSearchQuery, setAssetsSearchQuery] = useState('');
       const [currentAssetData, setCurrentAssetData] = useState(null);
       const [assetsLoading, setAssetsLoading] = useState(false);
+      const [aiAnalysisData, setAiAnalysisData] = useState(null);
+      const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
+      const [aiAnalysisError, setAiAnalysisError] = useState(null);
+      const [aiActiveTab, setAiActiveTab] = useState('study');
+      const aiChartRef = React.useRef(null);
+      const aiChartInstance = React.useRef(null);
 
       const handleAssetsGlobalSearch = async (tickerInput) => {
           if (!tickerInput) return;
           const ticker = tickerInput.trim().toUpperCase();
           setAssetsLoading(true);
           setCurrentAssetData(null);
+          setAiAnalysisData(null);
+          setAiAnalysisError(null);
           
           try {
               // 1. Fetch Insiders (from global cache or specific if needed)
@@ -8265,6 +8273,104 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
           } finally {
               setAssetsLoading(false);
           }
+      };
+
+      const fetchAiAnalysis = async (ticker) => {
+          if (!ticker) return;
+          setAiAnalysisLoading(true);
+          setAiAnalysisData(null);
+          setAiAnalysisError(null);
+          setAiActiveTab('study');
+          try {
+              const res = await fetch(`${API_BASE}/api/assets/ai-analysis/${ticker.trim().toUpperCase()}`);
+              const data = await res.json();
+              if (data.status === 'success') {
+                  setAiAnalysisData(data);
+              } else {
+                  setAiAnalysisError(data.message || 'Erreur inconnue');
+              }
+          } catch (e) {
+              setAiAnalysisError(`Erreur réseau : ${e.message}`);
+          } finally {
+              setAiAnalysisLoading(false);
+          }
+      };
+
+      // Render AI price chart when data arrives
+      React.useEffect(() => {
+          if (!aiAnalysisData?.price_history?.length || !aiChartRef.current) return;
+          if (aiChartInstance.current) { aiChartInstance.current.destroy(); aiChartInstance.current = null; }
+          const labels = aiAnalysisData.price_history.map(p => p.date);
+          const prices = aiAnalysisData.price_history.map(p => p.price);
+          const ctx = aiChartRef.current.getContext('2d');
+          const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+          gradient.addColorStop(0, 'rgba(203,60,29,0.18)');
+          gradient.addColorStop(1, 'rgba(203,60,29,0.01)');
+          aiChartInstance.current = new Chart(ctx, {
+              type: 'line',
+              data: {
+                  labels,
+                  datasets: [{
+                      label: aiAnalysisData.ticker,
+                      data: prices,
+                      borderColor: '#cb3c1d',
+                      borderWidth: 2.5,
+                      backgroundColor: gradient,
+                      fill: true,
+                      tension: 0.35,
+                      pointRadius: 3,
+                      pointBackgroundColor: '#cb3c1d',
+                      pointHoverRadius: 5,
+                  }]
+              },
+              options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                      legend: { display: false },
+                      tooltip: {
+                          callbacks: {
+                              label: ctx => `${ctx.parsed.y.toFixed(2)} ${aiAnalysisData.currency || ''}`
+                          }
+                      }
+                  },
+                  scales: {
+                      x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 6 } },
+                      y: { grid: { color: '#f1f5f9' }, ticks: { font: { size: 10 }, callback: v => `${v.toFixed(0)}` } }
+                  }
+              }
+          });
+          return () => { if (aiChartInstance.current) { aiChartInstance.current.destroy(); aiChartInstance.current = null; } };
+      }, [aiAnalysisData, aiActiveTab]);
+
+      const renderAiText = (text) => {
+          if (!text) return null;
+          // Convert bold **text** and bullet points to JSX
+          const lines = text.split('\n');
+          return lines.map((line, i) => {
+              if (!line.trim()) return React.createElement('div', { key: i, className: 'h-2' });
+              // Heading lines (all caps or starts with emoji + uppercase)
+              if (/^[A-Z\s\d\u{1F300}-\u{1FFFF}]{4,}$/u.test(line.trim()) || /^\d+\.\s+[A-Z]/.test(line.trim())) {
+                  return React.createElement('div', { key: i, className: 'text-xs font-bold text-slate-700 uppercase tracking-wider mt-3 mb-1 border-b border-slate-100 pb-1' }, line);
+              }
+              // Bullet points
+              if (line.trim().startsWith('-') || line.trim().startsWith('•') || line.trim().startsWith('*')) {
+                  const content = line.trim().replace(/^[-•*]\s*/, '');
+                  // Parse **bold** inline
+                  const parts = content.split(/(\*\*[^*]+\*\*)/g).map((part, j) =>
+                      part.startsWith('**') ? React.createElement('strong', { key: j, className: 'text-slate-800' }, part.slice(2, -2)) : part
+                  );
+                  return React.createElement('div', { key: i, className: 'flex gap-2 text-xs text-slate-600 leading-relaxed' },
+                      React.createElement('span', { className: 'text-[#cb3c1d] mt-0.5 shrink-0' }, '▸'),
+                      React.createElement('span', null, ...parts)
+                  );
+              }
+              // Regular line with **bold** parsing
+              const parts = line.split(/(\*\*[^*]+\*\*)/g).map((part, j) =>
+                  part.startsWith('**') ? React.createElement('strong', { key: j, className: 'text-slate-800' }, part.slice(2, -2)) : part
+              );
+              return React.createElement('p', { key: i, className: 'text-xs text-slate-600 leading-relaxed' }, ...parts);
+          });
       };
       
       const handleExecuteSearch = async (tickerInput) => {
@@ -11309,6 +11415,212 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                       );
                     })()}
 
+                  </div>
+                )}
+
+                  </div>
+                )}
+
+                {/* --- 4b. ANALYSE IA CLAUDE --- */}
+                {currentAssetData && !assetsLoading && (
+                  <div className="animate-fadeIn">
+                    {/* HEADER + BOUTON */}
+                    {!aiAnalysisData && !aiAnalysisLoading && (
+                      <div className="bg-gradient-to-r from-[#0F2443] to-[#1B3A6B] border border-[#1B3A6B] rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
+                            <span className="text-2xl">🤖</span>
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-white text-lg">Analyse IA — Claude Sonnet 4.6</h3>
+                            <p className="text-slate-300 text-sm mt-0.5">3 analyses profondes : métriques clés · données réelles · risques & signal de vente</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => fetchAiAnalysis(currentAssetData.ticker)}
+                          className="px-6 py-3 bg-[#E8541E] hover:bg-[#C94217] text-white rounded-xl font-bold text-sm transition-all shadow-lg shadow-orange-900/30 hover:shadow-orange-800/40 flex items-center gap-2 shrink-0 active:scale-95"
+                        >
+                          <span>⚡</span> Lancer l'Analyse IA
+                        </button>
+                      </div>
+                    )}
+
+                    {/* CHARGEMENT */}
+                    {aiAnalysisLoading && (
+                      <div className="bg-gradient-to-r from-[#0F2443] to-[#1B3A6B] rounded-2xl p-10 flex flex-col items-center gap-5 shadow-lg">
+                        <div className="relative w-16 h-16">
+                          <div className="absolute inset-0 border-4 border-white/10 rounded-full"></div>
+                          <div className="absolute inset-0 border-4 border-[#E8541E] border-t-transparent rounded-full animate-spin"></div>
+                          <span className="absolute inset-0 flex items-center justify-center text-2xl">🤖</span>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-white font-bold text-lg">Claude Sonnet 4.6 analyse {currentAssetData.ticker}…</p>
+                          <p className="text-slate-300 text-sm mt-1">Collecte des données · analyse fondamentale · évaluation des risques</p>
+                        </div>
+                        <div className="flex gap-2 mt-1">
+                          {['Données clés', 'Évolution', 'Risques & Exit'].map((s, i) => (
+                            <span key={i} className="text-[11px] bg-white/10 text-slate-300 px-3 py-1 rounded-full font-medium animate-pulse" style={{animationDelay: `${i * 0.3}s`}}>{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ERREUR */}
+                    {aiAnalysisError && !aiAnalysisLoading && (
+                      <div className="bg-red-50 border border-red-200 rounded-2xl p-6 flex items-start gap-3">
+                        <span className="text-red-500 text-xl mt-0.5">⚠️</span>
+                        <div>
+                          <p className="font-bold text-red-700">Erreur lors de l'analyse IA</p>
+                          <p className="text-red-600 text-sm mt-1">{aiAnalysisError}</p>
+                          <p className="text-red-400 text-xs mt-2">Vérifiez que votre token GitHub est configuré dans config.ini sous [github] api_token</p>
+                          <button onClick={() => fetchAiAnalysis(currentAssetData.ticker)} className="mt-3 px-4 py-1.5 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors">
+                            Réessayer
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* RÉSULTATS IA */}
+                    {aiAnalysisData && !aiAnalysisLoading && (
+                      <div className="space-y-4 animate-fadeIn">
+                        {/* Header résultats */}
+                        <div className="bg-gradient-to-r from-[#0F2443] to-[#1B3A6B] rounded-2xl p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-lg">
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl">🤖</span>
+                            <div>
+                              <h3 className="font-bold text-white">Analyse IA — {aiAnalysisData.company_name} ({aiAnalysisData.ticker})</h3>
+                              <p className="text-slate-300 text-xs mt-0.5">Claude Sonnet 4.6 via GitHub Models API</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { setAiAnalysisData(null); setAiAnalysisError(null); }}
+                            className="text-xs text-slate-400 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                          >
+                            ✕ Fermer
+                          </button>
+                        </div>
+
+                        {/* Tabs navigation */}
+                        <div className="flex gap-2 bg-slate-100 p-1 rounded-xl w-fit">
+                          {[
+                            { key: 'study', label: '📊 Données à étudier' },
+                            { key: 'data',  label: '📈 Données & Évolution' },
+                            { key: 'risks', label: '⚠️ Risques & Vente' },
+                          ].map(tab => (
+                            <button
+                              key={tab.key}
+                              onClick={() => setAiActiveTab(tab.key)}
+                              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${aiActiveTab === tab.key ? 'bg-white text-[#0F2443] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Tab: Données à étudier */}
+                        {aiActiveTab === 'study' && (
+                          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-fadeIn">
+                            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                <span className="p-1.5 bg-[#0F2443]/10 rounded-lg text-[#0F2443]">📊</span>
+                                Données principales à étudier pour {aiAnalysisData.ticker}
+                              </h4>
+                              <span className="text-[10px] bg-[#0F2443] text-white px-2 py-0.5 rounded font-bold">CLAUDE 4.6</span>
+                            </div>
+                            <div className="p-5 space-y-1 max-h-[600px] overflow-y-auto custom-scrollbar">
+                              {aiAnalysisData.analyses?.what_to_study?.error ? (
+                                <p className="text-red-500 text-sm">{aiAnalysisData.analyses.what_to_study.error}</p>
+                              ) : (
+                                renderAiText(aiAnalysisData.analyses?.what_to_study?.text)
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tab: Données & Évolution */}
+                        {aiActiveTab === 'data' && (
+                          <div className="space-y-4 animate-fadeIn">
+                            {/* Price chart */}
+                            {aiAnalysisData.price_history?.length > 1 && (
+                              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                  <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                    <span className="p-1.5 bg-[#cb3c1d]/10 rounded-lg text-[#cb3c1d]">📈</span>
+                                    Évolution du prix — {aiAnalysisData.ticker}
+                                  </h4>
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-mono font-bold text-slate-900">
+                                      {aiAnalysisData.current_price?.toFixed(2)} {aiAnalysisData.currency}
+                                    </span>
+                                    {(() => {
+                                      const ph = aiAnalysisData.price_history;
+                                      if (ph.length < 2) return null;
+                                      const change = ((ph[ph.length-1].price - ph[0].price) / ph[0].price * 100);
+                                      return (
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${change >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                          {change >= 0 ? '+' : ''}{change.toFixed(2)}% (12M)
+                                        </span>
+                                      );
+                                    })()}
+                                  </div>
+                                </div>
+                                <div className="p-4" style={{height: '260px', position: 'relative'}}>
+                                  <canvas ref={aiChartRef}></canvas>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* AI text analysis */}
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                              <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                  <span className="p-1.5 bg-[#0F2443]/10 rounded-lg text-[#0F2443]">🔍</span>
+                                  Analyse fondamentale & technique
+                                </h4>
+                                <span className="text-[10px] bg-[#0F2443] text-white px-2 py-0.5 rounded font-bold">CLAUDE 4.6</span>
+                              </div>
+                              <div className="p-5 space-y-1 max-h-[600px] overflow-y-auto custom-scrollbar">
+                                {aiAnalysisData.analyses?.data_analysis?.error ? (
+                                  <p className="text-red-500 text-sm">{aiAnalysisData.analyses.data_analysis.error}</p>
+                                ) : (
+                                  renderAiText(aiAnalysisData.analyses?.data_analysis?.text)
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tab: Risques & Vente */}
+                        {aiActiveTab === 'risks' && (
+                          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-fadeIn">
+                            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                <span className="p-1.5 bg-red-100 rounded-lg text-red-600">⚠️</span>
+                                Risques actuels & Signal de sortie
+                              </h4>
+                              <span className="text-[10px] bg-[#0F2443] text-white px-2 py-0.5 rounded font-bold">CLAUDE 4.6</span>
+                            </div>
+                            <div className="p-5 space-y-1 max-h-[600px] overflow-y-auto custom-scrollbar">
+                              {aiAnalysisData.analyses?.risks_and_exit?.error ? (
+                                <p className="text-red-500 text-sm">{aiAnalysisData.analyses.risks_and_exit.error}</p>
+                              ) : (
+                                renderAiText(aiAnalysisData.analyses?.risks_and_exit?.text)
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Re-analyze button */}
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => fetchAiAnalysis(currentAssetData.ticker)}
+                            className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-[#E8541E] bg-white border border-slate-200 rounded-xl hover:border-[#E8541E]/30 transition-all flex items-center gap-2"
+                          >
+                            🔄 Relancer l'analyse
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
