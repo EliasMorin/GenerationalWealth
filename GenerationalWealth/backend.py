@@ -4368,12 +4368,22 @@ def _get_copilot_token(oauth_token: str) -> tuple:
 
 
 def _call_claude(messages, max_tokens=2048):
-    """Appelle Claude Sonnet 4.6 via GitHub Copilot API.
-    Utilise copilot_token (obtenu via setup_copilot_token.py) en priorité."""
-    # Priorité : token OAuth Copilot dédié (setup_copilot_token.py)
+    """Appelle Claude Sonnet 4.6.
+    Priorité : Claude.ai web (sessionKey cookie) → GitHub Copilot API."""
+
+    # 1. Essai via Claude.ai web si session configurée
+    sess = _load_claude_session()
+    if sess.get("session_key") and sess.get("org_id"):
+        text, err = _call_claude_web(messages, max_tokens)
+        if text:
+            return text, None
+        # Si la session est expirée/invalide, on log et on bascule sur Copilot
+        print(f"[Claude.ai web] Échec ({err}), bascule sur GitHub Copilot.")
+
+    # 2. Fallback : token OAuth Copilot dédié (setup_copilot_token.py)
     oauth_token = _load_copilot_oauth_token() or _get_github_token_for_request()
     if not oauth_token:
-        return None, "Token Copilot non configuré. Exécutez setup_copilot_token.py sur le VPS."
+        return None, "Token Copilot non configuré et session Claude.ai absente."
 
     copilot_token, err = _get_copilot_token(oauth_token)
     if err:
@@ -4410,6 +4420,188 @@ def _call_claude(messages, max_tokens=2048):
         return None, str(e)
 
 
+# ============================================================================
+# CLAUDE.AI WEB SESSION (connexion directe via sessionKey cookie)
+# ============================================================================
+
+_CLAUDE_AI_BASE = "https://claude.ai"
+
+_CLAUDE_SHOW_WIDGET_TOOL = {
+    "name": "show_widget",
+    "description": (
+        "Show visual content — SVG graphics, diagrams, charts, or interactive HTML widgets — "
+        "that renders inline alongside your text response."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "loading_messages": {"type": "array", "items": {"type": "string"}},
+            "title": {"type": "string"},
+            "widget_code": {"type": "string"},
+        },
+        "required": ["loading_messages", "title", "widget_code"],
+    },
+}
+
+
+def _load_claude_session() -> dict:
+    """Lit la session Claude.ai depuis config.ini.
+    Retourne {'session_key': ..., 'org_id': ..., 'device_id': ...}."""
+    try:
+        _cfg = configparser.ConfigParser()
+        _cfg.read("config.ini")
+        if not _cfg.has_section("claude"):
+            return {}
+        return {
+            "session_key": _cfg.get("claude", "session_key", fallback="").strip(),
+            "org_id":      _cfg.get("claude", "org_id",      fallback="").strip(),
+            "device_id":   _cfg.get("claude", "device_id",   fallback="").strip(),
+        }
+    except Exception:
+        return {}
+
+
+def _save_claude_session(session_key: str, org_id: str = "", device_id: str = "") -> None:
+    """Sauvegarde la session Claude.ai dans config.ini."""
+    _cfg = configparser.ConfigParser()
+    _cfg.read("config.ini")
+    if not _cfg.has_section("claude"):
+        _cfg.add_section("claude")
+    _cfg.set("claude", "session_key", session_key)
+    if org_id:
+        _cfg.set("claude", "org_id", org_id)
+    if device_id:
+        _cfg.set("claude", "device_id", device_id)
+    elif not _cfg.get("claude", "device_id", fallback="").strip():
+        _cfg.set("claude", "device_id", str(uuid.uuid4()))
+    with open("config.ini", "w") as f:
+        _cfg.write(f)
+
+
+def _build_claude_web_headers(session_key: str, device_id: str) -> dict:
+    return {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip, deflate, br",
+        "accept-language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "anthropic-client-platform": "web_claude_ai",
+        "anthropic-device-id": device_id,
+        "content-type": "application/json",
+        "origin": "https://claude.ai",
+        "referer": "https://claude.ai/new",
+        "user-agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+        ),
+        "cookie": f"anthropic-device-id={device_id}; sessionKey={session_key}",
+    }
+
+
+def _claude_web_create_conversation(org_id: str, headers: dict) -> str:
+    """Crée une nouvelle conversation et retourne son UUID."""
+    url = f"{_CLAUDE_AI_BASE}/api/organizations/{org_id}/chat_conversations"
+    payload = {"uuid": str(uuid.uuid4()), "name": ""}
+    get_headers = {**headers, "accept": "application/json"}
+    r = requests.post(url, headers=get_headers, json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()["uuid"]
+
+
+def _claude_web_collect_response(
+    org_id: str,
+    conv_id: str,
+    prompt: str,
+    headers: dict,
+    model: str = "claude-sonnet-4-6",
+    effort: str = "medium",
+    thinking_mode: str = "off",
+    with_widgets: bool = True,
+) -> str:
+    """Envoie un prompt à claude.ai et collecte la réponse complète via SSE."""
+    url = f"{_CLAUDE_AI_BASE}/api/organizations/{org_id}/chat_conversations/{conv_id}/completion"
+    payload = {
+        "prompt": prompt,
+        "timezone": "Europe/Paris",
+        "personalized_styles": [
+            {
+                "type": "default", "key": "Default", "name": "Normal",
+                "nameKey": "normal_style_name", "prompt": "Normal\n",
+                "summary": "Default responses from Claude",
+                "summaryKey": "normal_style_summary", "isDefault": True,
+            }
+        ],
+        "locale": "fr-FR",
+        "model": model,
+        "effort": effort,
+        "thinking_mode": thinking_mode,
+        "tools": [_CLAUDE_SHOW_WIDGET_TOOL] if with_widgets else [],
+    }
+
+    text_parts = []
+    with requests.post(url, headers=headers, json=payload, stream=True, timeout=120) as r:
+        r.raise_for_status()
+        for raw_line in r.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                event = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type == "content_block_delta":
+                delta = event.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    text_parts.append(delta.get("text", ""))
+            elif event_type == "message_stop":
+                break
+
+    return "".join(text_parts)
+
+
+def _call_claude_web(messages: list, max_tokens: int = 2048) -> tuple:
+    """Appelle Claude.ai web (session cookie) et retourne (texte, erreur).
+    Accepte les mêmes messages OpenAI-style que _call_claude."""
+    sess = _load_claude_session()
+    session_key = sess.get("session_key", "")
+    org_id      = sess.get("org_id", "")
+    device_id   = sess.get("device_id", "") or str(uuid.uuid4())
+
+    if not session_key or not org_id:
+        return None, "Claude.ai non configuré"
+
+    # Convertir les messages OpenAI-style en un prompt unique
+    parts = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            parts.append(content)
+        elif role == "user":
+            parts.append(content)
+        elif role == "assistant":
+            parts.append(f"[Réponse précédente : {content}]")
+    prompt = "\n\n".join(p for p in parts if p)
+
+    try:
+        headers = _build_claude_web_headers(session_key, device_id)
+        conv_id = _claude_web_create_conversation(org_id, headers)
+        text = _claude_web_collect_response(org_id, conv_id, prompt, headers)
+        if not text:
+            return None, "Réponse vide de Claude.ai"
+        return text, None
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        body = e.response.text[:200] if e.response is not None else ""
+        return None, f"Claude.ai HTTP {status}: {body}"
+    except Exception as e:
+        return None, f"Claude.ai erreur: {e}"
+
+
 @app.route('/api/debug/copilot-models', methods=['GET'])
 def debug_copilot_models():
     """Liste les modèles disponibles via l'API Copilot (debug)."""
@@ -4438,6 +4630,175 @@ def debug_copilot_models():
         return jsonify({'all_models': models, 'claude_models': claude_models})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ── Claude.ai web session endpoints ──────────────────────────────────────────
+
+@app.route('/api/claude/status', methods=['GET'])
+def claude_status():
+    """Retourne l'état de la connexion Claude.ai."""
+    sess = _load_claude_session()
+    connected = bool(sess.get("session_key") and sess.get("org_id"))
+    return jsonify({
+        "connected": connected,
+        "org_id": sess.get("org_id", ""),
+        "has_device_id": bool(sess.get("device_id")),
+    })
+
+
+@app.route('/api/claude/connect', methods=['POST', 'OPTIONS'])
+def claude_connect():
+    """Sauvegarde et vérifie la session Claude.ai.
+    Body JSON: { session_key, org_id }
+    """
+    if request.method == 'OPTIONS':
+        return '', 204
+    data = request.get_json(silent=True) or {}
+    session_key = (data.get("session_key") or "").strip()
+    org_id      = (data.get("org_id")      or "").strip()
+
+    if not session_key:
+        return jsonify({"success": False, "error": "session_key manquant"}), 400
+    if not org_id:
+        return jsonify({"success": False, "error": "org_id manquant"}), 400
+
+    device_id = str(uuid.uuid4())
+    # Vérification rapide : créer une conversation de test
+    try:
+        headers = _build_claude_web_headers(session_key, device_id)
+        conv_id = _claude_web_create_conversation(org_id, headers)
+        # Si on arrive ici, la session est valide
+        _save_claude_session(session_key, org_id, device_id)
+        return jsonify({"success": True, "conv_id": conv_id})
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        if status == 401 or status == 403:
+            return jsonify({"success": False, "error": f"Session invalide ou expirée (HTTP {status})"}), 401
+        return jsonify({"success": False, "error": f"HTTP {status}"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/claude/disconnect', methods=['POST', 'OPTIONS'])
+def claude_disconnect():
+    """Supprime la session Claude.ai."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    _save_claude_session("", "", "")
+    return jsonify({"success": True})
+
+
+# ── Claude.ai browser-assisted login ─────────────────────────────────────────
+
+_browser_login_state: dict = {'status': 'idle', 'message': '', 'error': ''}
+_browser_login_lock = Lock()
+
+
+@app.route('/api/claude/browser-login/start', methods=['POST', 'OPTIONS'])
+def claude_browser_login_start():
+    """Ouvre un navigateur Chromium pour que l'utilisateur se connecte à Claude.ai.
+    Capture automatiquement le sessionKey et l'org_id une fois connecté."""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    if not PLAYWRIGHT_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Playwright non installé. Utilisez la connexion manuelle.'}), 400
+
+    with _browser_login_lock:
+        if _browser_login_state['status'] == 'running':
+            return jsonify({'success': True, 'status': 'already_running'})
+        _browser_login_state.update({'status': 'running', 'message': 'Ouverture du navigateur…', 'error': ''})
+
+    def _run_browser():
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=False, args=['--no-sandbox'])
+                ctx = browser.new_context()
+                page = ctx.new_page()
+                page.goto('https://claude.ai/login', timeout=30000)
+
+                with _browser_login_lock:
+                    _browser_login_state['message'] = 'Connectez-vous à Claude.ai dans le navigateur…'
+
+                # Attente du cookie sessionKey (max 3 minutes)
+                session_key = None
+                for _ in range(180):
+                    cookies = ctx.cookies('https://claude.ai')
+                    session_key = next((c['value'] for c in cookies if c['name'] == 'sessionKey'), None)
+                    if session_key:
+                        break
+                    time.sleep(1)
+
+                if not session_key:
+                    with _browser_login_lock:
+                        _browser_login_state.update({
+                            'status': 'error',
+                            'error': 'Timeout : connexion non détectée en 3 minutes.',
+                        })
+                    browser.close()
+                    return
+
+                with _browser_login_lock:
+                    _browser_login_state['message'] = 'Session détectée, récupération de l\'org_id…'
+
+                browser.close()
+
+            # Récupère l'org_id via l'API claude.ai
+            device_id = str(uuid.uuid4())
+            org_id = ''
+            try:
+                resp = requests.get(
+                    'https://claude.ai/api/organizations',
+                    headers=_build_claude_web_headers(session_key, device_id),
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                orgs = resp.json()
+                if isinstance(orgs, list) and orgs:
+                    org_id = orgs[0].get('uuid') or orgs[0].get('id', '')
+            except Exception as e:
+                print(f'[Claude browser-login] org_id fetch error: {e}')
+
+            if not org_id:
+                with _browser_login_lock:
+                    _browser_login_state.update({
+                        'status': 'error',
+                        'error': 'Session capturée mais impossible de récupérer l\'org_id. Utilisez la connexion manuelle.',
+                    })
+                return
+
+            _save_claude_session(session_key, org_id, device_id)
+            with _browser_login_lock:
+                _browser_login_state.update({
+                    'status': 'success',
+                    'message': f'Connecté à Claude.ai (org: {org_id[:8]}…)',
+                    'error': '',
+                })
+
+        except Exception as e:
+            with _browser_login_lock:
+                _browser_login_state.update({'status': 'error', 'error': str(e)})
+
+    t = threading.Thread(target=_run_browser, daemon=True)
+    t.start()
+    return jsonify({'success': True, 'status': 'started'})
+
+
+@app.route('/api/claude/browser-login/status', methods=['GET'])
+def claude_browser_login_status():
+    """Retourne l'état en cours du login navigateur."""
+    with _browser_login_lock:
+        return jsonify(dict(_browser_login_state))
+
+
+@app.route('/api/claude/browser-login/reset', methods=['POST', 'OPTIONS'])
+def claude_browser_login_reset():
+    """Remet le state du browser-login à idle."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    with _browser_login_lock:
+        _browser_login_state.update({'status': 'idle', 'message': '', 'error': ''})
+    return jsonify({'success': True})
 
 
 @app.route('/api/assets/ai-analysis/<ticker>', methods=['GET'])

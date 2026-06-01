@@ -8180,8 +8180,17 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
       const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
       const [aiAnalysisError, setAiAnalysisError] = useState(null);
       const [aiActiveTab, setAiActiveTab] = useState('study');
+      const [claudeConnected, setClaudeConnected] = useState(false);
       const aiChartRef = React.useRef(null);
       const aiChartInstance = React.useRef(null);
+
+      // Charge le statut Claude.ai au montage
+      React.useEffect(() => {
+          fetch(API_BASE + '/api/claude/status', { credentials: 'include' })
+              .then(r => r.json())
+              .then(d => setClaudeConnected(d.connected === true))
+              .catch(() => {});
+      }, []);
 
       const handleAssetsGlobalSearch = async (tickerInput) => {
           if (!tickerInput) return;
@@ -11496,6 +11505,13 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                           <div>
                             <h3 className="font-bold text-white text-lg">Analyse IA — Claude Sonnet 4.6</h3>
                             <p className="text-slate-300 text-sm mt-0.5">3 analyses profondes : métriques clés · données réelles · risques & signal de vente</p>
+                            <div className="flex items-center gap-2 mt-1.5">
+                              {claudeConnected ? (
+                                <span className="text-[11px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium">● Claude.ai direct</span>
+                              ) : (
+                                <span className="text-[11px] bg-white/10 text-slate-400 border border-white/10 px-2 py-0.5 rounded-full font-medium">○ GitHub Copilot</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <button
@@ -11518,6 +11534,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                         <div className="text-center">
                           <p className="text-white font-bold text-lg">Claude Sonnet 4.6 analyse {currentAssetData.ticker}…</p>
                           <p className="text-slate-300 text-sm mt-1">Collecte des données · analyse fondamentale · évaluation des risques</p>
+                          <p className="text-slate-400 text-xs mt-1">{claudeConnected ? 'Via Claude.ai direct' : 'Via GitHub Copilot'}</p>
                         </div>
                         <div className="flex gap-2 mt-1">
                           {['Données clés', 'Évolution', 'Risques & Exit'].map((s, i) => (
@@ -11534,7 +11551,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                         <div>
                           <p className="font-bold text-red-700">Erreur lors de l'analyse IA</p>
                           <p className="text-red-600 text-sm mt-1">{aiAnalysisError}</p>
-                          <p className="text-red-400 text-xs mt-2">Vérifiez que votre token GitHub est configuré dans config.ini sous [github] api_token</p>
+                          <p className="text-red-400 text-xs mt-2">{claudeConnected ? 'Vérifiez votre session Claude.ai dans Paramètres (session expirée ?)' : 'Configurez Claude.ai ou un token GitHub dans Paramètres du compte'}</p>
                           <button onClick={() => fetchAiAnalysis(currentAssetData.ticker)} className="mt-3 px-4 py-1.5 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors">
                             Réessayer
                           </button>
@@ -11551,7 +11568,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                             <span className="text-2xl">🤖</span>
                             <div>
                               <h3 className="font-bold text-white">Analyse IA — {aiAnalysisData.company_name} ({aiAnalysisData.ticker})</h3>
-                              <p className="text-slate-300 text-xs mt-0.5">Claude Sonnet 4.6 via GitHub Models API</p>
+                              <p className="text-slate-300 text-xs mt-0.5">{claudeConnected ? 'Claude Sonnet 4.6 via Claude.ai' : 'Claude Sonnet 4.6 via GitHub Models API'}</p>
                             </div>
                           </div>
                           <button
@@ -12520,6 +12537,109 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         const [loading, setLoading] = React.useState(false);
         const [msg, setMsg] = React.useState({ type: '', text: '' });
 
+        // ── Claude.ai state ──
+        const [claudeStatus, setClaudeStatus] = React.useState(null);
+        const [claudeLoading, setClaudeLoading] = React.useState(false);
+        const [claudeMsg, setClaudeMsg] = React.useState({ type: '', text: '' });
+        const [browserLoginState, setBrowserLoginState] = React.useState(null); // null | {status, message, error}
+        const [showManualForm, setShowManualForm] = React.useState(false);
+        const [manualForm, setManualForm] = React.useState({ session_key: '', org_id: '' });
+        const pollRef = React.useRef(null);
+
+        // Charge le statut initial
+        React.useEffect(() => {
+            fetch(API_BASE + '/api/claude/status', { credentials: 'include' })
+                .then(r => r.json()).then(d => setClaudeStatus(d)).catch(() => {});
+            // Reset le state browser-login côté serveur au montage
+            fetch(API_BASE + '/api/claude/browser-login/reset', { method: 'POST', credentials: 'include' }).catch(() => {});
+            return () => { if (pollRef.current) clearInterval(pollRef.current); };
+        }, []);
+
+        // Lance le navigateur pour se connecter
+        const handleBrowserLogin = async () => {
+            setClaudeLoading(true);
+            setClaudeMsg({ type: '', text: '' });
+            setBrowserLoginState({ status: 'running', message: 'Démarrage…', error: '' });
+            try {
+                const res = await fetch(API_BASE + '/api/claude/browser-login/start', {
+                    method: 'POST', credentials: 'include',
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    setBrowserLoginState({ status: 'error', error: data.error || 'Impossible de démarrer le navigateur.' });
+                    setClaudeLoading(false);
+                    return;
+                }
+                // Polling toutes les 2s pour suivre l'état
+                pollRef.current = setInterval(async () => {
+                    try {
+                        const r = await fetch(API_BASE + '/api/claude/browser-login/status', { credentials: 'include' });
+                        const s = await r.json();
+                        setBrowserLoginState(s);
+                        if (s.status === 'success') {
+                            clearInterval(pollRef.current);
+                            setClaudeLoading(false);
+                            setClaudeStatus({ connected: true, org_id: '' });
+                            // Rafraîchit le statut complet
+                            fetch(API_BASE + '/api/claude/status', { credentials: 'include' })
+                                .then(rr => rr.json()).then(d => setClaudeStatus(d)).catch(() => {});
+                        } else if (s.status === 'error') {
+                            clearInterval(pollRef.current);
+                            setClaudeLoading(false);
+                        }
+                    } catch (e) {}
+                }, 2000);
+            } catch (err) {
+                setBrowserLoginState({ status: 'error', error: 'Erreur réseau' });
+                setClaudeLoading(false);
+            }
+        };
+
+        const handleManualConnect = async (e) => {
+            e.preventDefault();
+            if (!manualForm.session_key || !manualForm.org_id) {
+                setClaudeMsg({ type: 'error', text: 'session_key et org_id requis.' });
+                return;
+            }
+            setClaudeLoading(true);
+            setClaudeMsg({ type: '', text: '' });
+            try {
+                const res = await fetch(API_BASE + '/api/claude/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ session_key: manualForm.session_key, org_id: manualForm.org_id }),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    setClaudeStatus({ connected: true, org_id: manualForm.org_id });
+                    setManualForm({ session_key: '', org_id: '' });
+                    setShowManualForm(false);
+                    setClaudeMsg({ type: 'ok', text: 'Connecté à Claude.ai ✓' });
+                } else {
+                    setClaudeMsg({ type: 'error', text: data.error || 'Connexion échouée' });
+                }
+            } catch (err) {
+                setClaudeMsg({ type: 'error', text: 'Erreur réseau' });
+            } finally {
+                setClaudeLoading(false);
+            }
+        };
+
+        const handleDisconnect = async () => {
+            setClaudeLoading(true);
+            try {
+                await fetch(API_BASE + '/api/claude/disconnect', { method: 'POST', credentials: 'include' });
+                setClaudeStatus({ connected: false, org_id: '' });
+                setBrowserLoginState(null);
+                setClaudeMsg({ type: '', text: '' });
+            } catch (err) {
+                setClaudeMsg({ type: 'error', text: 'Erreur réseau' });
+            } finally {
+                setClaudeLoading(false);
+            }
+        };
+
         const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
         const handleSave = async (e) => {
@@ -12557,22 +12677,117 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
         return (
             <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm"
                  onClick={e => e.target === e.currentTarget && onClose()}>
-                <div style={{ width: '100%', maxWidth: 440, background: '#fff', borderRadius: 16, boxShadow: '0 25px 50px rgba(0,0,0,.2)' }} className="m-4 p-8">
+                <div style={{ width: '100%', maxWidth: 480, background: '#fff', borderRadius: 16, boxShadow: '0 25px 50px rgba(0,0,0,.2)', maxHeight: '90vh', overflowY: 'auto' }} className="m-4 p-8">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-xl font-bold text-slate-900">Paramètres du compte</h2>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
                     </div>
 
                     <form onSubmit={handleSave} className="space-y-5">
+                        {/* ── Claude.ai connexion ── */}
+                        <div>
+                            <div className="flex items-center justify-between mb-3">
+                                <label className="text-sm font-semibold text-slate-700">Connexion Claude.ai</label>
+                                {claudeStatus && (
+                                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${claudeStatus.connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                        {claudeStatus.connected ? '● Connecté' : '○ Non connecté'}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Connecté */}
+                            {claudeStatus?.connected ? (
+                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p className="text-sm font-semibold text-emerald-800">✓ Session active</p>
+                                            {claudeStatus.org_id && <p className="text-xs text-emerald-600 mt-0.5 font-mono">{claudeStatus.org_id}</p>}
+                                            <p className="text-xs text-emerald-600 mt-1">L'analyse IA utilise Claude.ai directement (abonnement gratuit)</p>
+                                        </div>
+                                        <button type="button" onClick={handleDisconnect} disabled={claudeLoading}
+                                            className="text-xs text-red-500 hover:text-red-700 font-medium whitespace-nowrap">
+                                            Déconnecter
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : browserLoginState?.status === 'running' ? (
+                                /* En cours */
+                                <div className="bg-[#0F2443] rounded-xl p-4 flex flex-col items-center gap-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0"></div>
+                                        <p className="text-white text-sm font-medium">{browserLoginState.message || 'Connexion en cours…'}</p>
+                                    </div>
+                                    <p className="text-slate-400 text-xs text-center">Connectez-vous dans la fenêtre Chrome qui vient de s'ouvrir</p>
+                                    <button type="button" onClick={() => { if (pollRef.current) clearInterval(pollRef.current); setBrowserLoginState(null); setClaudeLoading(false); fetch(API_BASE + '/api/claude/browser-login/reset', { method: 'POST', credentials: 'include' }).catch(() => {}); }}
+                                        className="text-xs text-slate-400 hover:text-white underline">
+                                        Annuler
+                                    </button>
+                                </div>
+                            ) : (
+                                /* Non connecté */
+                                <div className="space-y-3">
+                                    {/* Bouton principal */}
+                                    <button type="button" onClick={handleBrowserLogin} disabled={claudeLoading}
+                                        className="w-full bg-[#0F2443] hover:bg-[#1B3A6B] text-white rounded-xl py-3.5 text-sm font-bold disabled:opacity-50 transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-slate-900/10">
+                                        <span className="text-lg">🤖</span>
+                                        Se connecter à Claude.ai
+                                    </button>
+                                    <p className="text-xs text-slate-400 text-center">
+                                        Un navigateur Chrome s'ouvrira — connectez-vous à claude.ai, la session est capturée automatiquement
+                                    </p>
+
+                                    {/* Erreur browser-login */}
+                                    {browserLoginState?.status === 'error' && (
+                                        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                                            <p className="text-xs text-red-700 font-medium">{browserLoginState.error}</p>
+                                        </div>
+                                    )}
+
+                                    {/* Connexion manuelle (collapsible fallback) */}
+                                    <button type="button" onClick={() => setShowManualForm(v => !v)}
+                                        className="w-full text-xs text-slate-400 hover:text-slate-600 py-1 flex items-center justify-center gap-1">
+                                        <span>{showManualForm ? '▲' : '▼'}</span> Connexion manuelle (copier-coller depuis DevTools)
+                                    </button>
+
+                                    {showManualForm && (
+                                        <div className="space-y-2 border border-slate-100 rounded-xl p-3 bg-slate-50">
+                                            <input type="password" value={manualForm.session_key}
+                                                onChange={e => setManualForm(p => ({ ...p, session_key: e.target.value }))}
+                                                placeholder="sessionKey cookie (sk-ant-sid02-…)"
+                                                className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none bg-white"
+                                            />
+                                            <input type="text" value={manualForm.org_id}
+                                                onChange={e => setManualForm(p => ({ ...p, org_id: e.target.value }))}
+                                                placeholder="org_id (ex: 8bddfa61-474e-425c-…)"
+                                                className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none bg-white"
+                                            />
+                                            <button type="button" onClick={handleManualConnect} disabled={claudeLoading}
+                                                className="w-full bg-slate-800 hover:bg-slate-900 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-50 transition-colors">
+                                                {claudeLoading ? '…' : 'Valider'}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {claudeMsg.text && (
+                                <div className={`text-sm p-2.5 rounded-lg mt-2 ${claudeMsg.type === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                    {claudeMsg.text}
+                                </div>
+                            )}
+                        </div>
+
+                        <hr className="border-slate-100"/>
+
                         {/* GitHub Token */}
                         <div>
-                            <label className="block text-sm font-semibold text-slate-700 mb-1">Token GitHub (Claude AI)</label>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1">Token GitHub (fallback Claude AI)</label>
                             <input type="password" value={form.github_token} onChange={e => update('github_token', e.target.value)}
                                 placeholder="ghp_xxxxxxxxxxxx — laisser vide pour ne pas changer"
                                 className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                             />
                             <p className="text-xs text-slate-400 mt-1">
-                                Classic PAT depuis <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">github.com/settings/tokens</a> (aucun scope requis)
+                                Classic PAT depuis <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">github.com/settings/tokens</a> — utilisé si Claude.ai non connecté
                             </p>
                         </div>
 
