@@ -1359,7 +1359,7 @@ GITHUB_TOKENS = _load_github_tokens()
 GITHUB_TOKEN = GITHUB_TOKENS[0] if GITHUB_TOKENS else ""
 # GitHub Copilot API — accès à Claude Sonnet 4.6 (inclus dans Copilot Pro)
 GITHUB_MODELS_URL = "https://api.githubcopilot.com/chat/completions"
-GITHUB_CLAUDE_MODEL = "claude-sonnet-4-6"
+GITHUB_CLAUDE_MODEL = "claude-sonnet-4.6"
 
 
 def _jwt_expiry(token):
