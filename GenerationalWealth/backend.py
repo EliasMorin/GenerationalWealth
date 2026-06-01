@@ -1333,7 +1333,7 @@ def _load_github_token():
 
 GITHUB_TOKEN = _load_github_token()
 GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
-GITHUB_CLAUDE_MODEL = "claude-sonnet-4-6"
+GITHUB_CLAUDE_MODEL = "gpt-4o"
 
 
 def _jwt_expiry(token):
