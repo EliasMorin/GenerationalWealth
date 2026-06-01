@@ -6971,7 +6971,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
     };
 
     /* --------------- Composant principal --------------- */
-    const FinancialTerminal = ({ authUser, onLogout }) => {
+    const FinancialTerminal = () => {
       const [txFilterMonth, setTxFilterMonth] = useState('ALL');
       const [showAllTx, setShowAllTx] = useState(false);
       
@@ -7113,9 +7113,6 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
       const setShowUserMenu = (v) => dispatch({type: 'SET_AUTH_STATE', payload: {showUserMenu: v}});
       const setShowLoginModal = (v) => dispatch({type: 'SET_AUTH_STATE', payload: {showLoginModal: v}});
       const setAuthChecked = (v) => dispatch({type: 'SET_AUTH_STATE', payload: {authChecked: v}});
-
-      // Account settings modal state
-      const [showAccountSettings, setShowAccountSettings] = React.useState(false);
 
       // Shims Loading
       const setLoading = (v) => dispatch({type: 'SET_LOADING', payload: v});
@@ -7419,16 +7416,12 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
 
       const handleLogout = async () => {
           try {
-             // Logout from app session
-             await fetch(API_BASE + '/api/auth/logout', { method: 'POST', credentials: 'include' });
-             // Also clear TR session
              await fetch(API_BASE + '/api/tr/logout', { method: 'POST', credentials: 'include' });
           } catch(e) { console.error("Logout failed", e); }
           setIsLoggedIn(false);
           setShowUserMenu(false);
           localStorage.removeItem('user_profile');
           setUserProfile(null);
-          if (onLogout) onLogout();
       };
 
       // Load Profile on startup
@@ -8958,29 +8951,14 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                     </button>
                     
                     {showUserMenu && (
-                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-100 py-2 z-50 animate-fadeIn origin-top-right">
-                           {/* App-level user */}
-                           {authUser && (
-                               <div className="px-4 py-3 border-b border-slate-100 mb-1">
-                                  <div className="text-xs text-slate-400 uppercase tracking-wider font-bold mb-1">Compte</div>
-                                  <div className="text-sm font-bold text-slate-900">👤 {authUser.username}</div>
-                                  {authUser.is_admin && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">Admin</span>}
-                               </div>
-                           )}
-                           {/* TR profile info */}
+                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-100 py-2 z-50 animate-fadeIn origin-top-right">
                            {userProfile && (
-                               <div className="px-4 py-2 border-b border-slate-100 mb-1">
-                                  <div className="text-xs text-slate-400 uppercase tracking-wider font-bold mb-1">Trade Republic</div>
-                                  <div className="text-sm font-semibold text-slate-700">{userProfile.firstName} {userProfile.lastName}</div>
+                               <div className="px-4 py-3 border-b border-slate-100 mb-2">
+                                  <div className="text-xs text-slate-400 uppercase tracking-wider font-bold mb-1">Connecté en tant que</div>
+                                  <div className="text-sm font-bold text-slate-900">{userProfile.firstName} {userProfile.lastName}</div>
                                   <div className="text-xs text-slate-400 font-mono mt-0.5">{userProfile.phone}</div>
-                               </div>
+                                </div>
                            )}
-                           <button 
-                              onClick={() => { setShowAccountSettings(true); setShowUserMenu(false); }}
-                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                           >
-                              <Settings className="w-4 h-4" /> Paramètres du compte
-                           </button>
                            <button 
                               onClick={handleLogout}
                               className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
@@ -9092,12 +9070,7 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
                 onLoginSuccess={handleLoginSuccess}
             />
 
-            {/* Modale Paramètres Compte */}
-            {showAccountSettings && (
-                <AccountSettingsModal onClose={() => setShowAccountSettings(false)} />
-            )}
-
-            {/* Portfolio Loader Overlay */}
+            {/* Portfolio Loader Overlay */}}
             <PortfolioLoader 
                 isOpen={isRefreshingPortfolio}
                 steps={refreshSteps}
@@ -12726,27 +12699,9 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
     const RootApp = () => {
         const [loadingStatus, setLoadingStatus] = useState(null);
         const [isAppReady, setIsAppReady] = useState(false);
-        const [authUser, setAuthUser] = React.useState(null);   // null = unknown, false = not authed, obj = authed
-        const [authChecked, setAuthChecked] = React.useState(false);
         const [error, setError] = useState(null);
 
-        // Check auth status first
         useEffect(() => {
-            fetch(API_BASE + '/api/auth/status', { credentials: 'include' })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'authenticated') {
-                        setAuthUser({ username: data.username, is_admin: data.is_admin });
-                    } else {
-                        setAuthUser(false);
-                    }
-                })
-                .catch(() => setAuthUser(false))
-                .finally(() => setAuthChecked(true));
-        }, []);
-
-        useEffect(() => {
-            if (!authChecked || authUser === false) return;
             let isMounted = true;
             const pollLoading = async () => {
                  if (isAppReady) return;
@@ -12776,31 +12731,13 @@ const BloombergIcon = React.memo(({ className = "w-5 h-5" }) => (
             };
             pollLoading();
             return () => { isMounted = false; };
-        }, [isAppReady, authChecked, authUser]);
-
-        // Not yet checked
-        if (!authChecked) {
-            return (
-                <div style={{ minHeight: '100vh', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ color: '#64748b', fontSize: 14 }}>Chargement...</div>
-                </div>
-            );
-        }
-
-        // Not authenticated
-        if (authUser === false) {
-            return <AuthGate onAuthenticated={(data) => setAuthUser({ username: data.username, is_admin: data.is_admin })} />;
-        }
+        }, [isAppReady]);
 
         if (!isAppReady) {
             return <LoadingScreen status={loadingStatus} />;
         }
 
-        return <FinancialTerminal authUser={authUser} onLogout={() => {
-            fetch(API_BASE + '/api/auth/logout', { method: 'POST', credentials: 'include' });
-            setAuthUser(false);
-            setIsAppReady(false);
-        }} />;
+        return <FinancialTerminal />;
     };
 
     ReactDOM.createRoot(document.getElementById('root')).render(<RootApp />);

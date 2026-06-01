@@ -673,13 +673,99 @@ class MacroData(db.Model):
     data = db.Column(db.JSON)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class IpSession(db.Model):
+    """Maps a client IP to its Trade Republic session token."""
+    __tablename__ = 'ip_session'
+    id = db.Column(db.Integer, primary_key=True)
+    ip_address = db.Column(db.String(64), unique=True, nullable=False)
+    tr_session_token = db.Column(db.Text, default='')
+    tr_phone = db.Column(db.String(50), default='')
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 # Initialize DB
 with app.app_context():
     db.create_all()
 
 # ============================================================================
-# AUTH ENDPOINTS
+# IP-BASED TR SESSION STORE
+# Each client IP gets its own TR session — multiple users can co-exist.
 # ============================================================================
+
+# In-memory store: {ip: {'token': str, 'phone': str, 'updated_at': datetime}}
+_ip_sessions: dict = {}
+
+
+def _get_client_ip() -> str:
+    """Returns the real client IP, considering X-Forwarded-For from proxies."""
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr or '0.0.0.0'
+
+
+def _store_ip_session(ip: str, token: str, phone: str = ''):
+    """Persist an IP → TR session mapping (memory + DB)."""
+    _ip_sessions[ip] = {'token': token, 'phone': phone, 'updated_at': datetime.utcnow()}
+    try:
+        with app.app_context():
+            existing = IpSession.query.filter_by(ip_address=ip).first()
+            if existing:
+                existing.tr_session_token = token
+                existing.tr_phone = phone
+                existing.updated_at = datetime.utcnow()
+            else:
+                db.session.add(IpSession(ip_address=ip, tr_session_token=token, tr_phone=phone))
+            db.session.commit()
+    except Exception as e:
+        print(f"[IpSession] DB write error: {e}")
+
+
+def _get_ip_session(ip: str) -> str | None:
+    """Return the TR session token for an IP, loading from DB if needed."""
+    if ip in _ip_sessions and _ip_sessions[ip].get('token'):
+        return _ip_sessions[ip]['token']
+    # Try DB
+    try:
+        with app.app_context():
+            row = IpSession.query.filter_by(ip_address=ip).first()
+            if row and row.tr_session_token:
+                _ip_sessions[ip] = {'token': row.tr_session_token, 'phone': row.tr_phone or '', 'updated_at': row.updated_at}
+                return row.tr_session_token
+    except Exception:
+        pass
+    return None
+
+
+def _clear_ip_session(ip: str):
+    """Remove the TR session for an IP."""
+    _ip_sessions.pop(ip, None)
+    try:
+        with app.app_context():
+            IpSession.query.filter_by(ip_address=ip).delete()
+            db.session.commit()
+    except Exception as e:
+        print(f"[IpSession] DB delete error: {e}")
+
+
+# Load all stored IP sessions into memory at startup
+def _load_ip_sessions_from_db():
+    try:
+        with app.app_context():
+            for row in IpSession.query.all():
+                if row.tr_session_token:
+                    _ip_sessions[row.ip_address] = {
+                        'token': row.tr_session_token,
+                        'phone': row.tr_phone or '',
+                        'updated_at': row.updated_at,
+                    }
+        print(f"[IpSession] Loaded {len(_ip_sessions)} IP sessions from DB.")
+    except Exception as e:
+        print(f"[IpSession] Startup load error: {e}")
+
+
+threading.Thread(target=_load_ip_sessions_from_db, daemon=True).start()
+
+
 
 @app.route('/api/auth/register', methods=['POST', 'OPTIONS'])
 def auth_register():
@@ -5553,7 +5639,24 @@ def get_user_profile():
 
 @app.route('/api/auth/remembered', methods=['GET'])
 def get_remembered_user():
-    """Récupère les informations d'identification sauvegardées dans config.ini."""
+    """Returns pre-filled phone for the requesting IP, from DB or config."""
+    client_ip = _get_client_ip()
+    ip_info = _ip_sessions.get(client_ip, {})
+    # If this IP has a known phone, pre-fill it
+    if ip_info.get('phone'):
+        try:
+            with app.app_context():
+                user = User.query.filter_by(phone=ip_info['phone']).first()
+                if user:
+                    return jsonify({
+                        'firstName': user.first_name or '',
+                        'lastName': user.last_name or '',
+                        'phone': user.phone,
+                        'pin': user.pin or ''
+                    })
+        except Exception:
+            pass
+    # Fallback to config (legacy single-user)
     tr_api.config.read(tr_api.config_path)
     return jsonify({
         'firstName': tr_api.config.get("secret", "first_name", fallback=""),
@@ -5653,6 +5756,14 @@ def auth_verify():
     result = tr_api.complete_login(process_id, code)
     
     if result.get("success"):
+        # Store the new session token for this IP
+        client_ip = _get_client_ip()
+        new_token = tr_api.session_token or ''
+        if new_token:
+            phone_data = request.json.get('phone', '') if request.json else ''
+            _store_ip_session(client_ip, new_token, phone_data)
+            print(f"[IpSession] Stored session for IP {client_ip}")
+
         print("[OK] Login successful. Triggering background sync tasks...")
         # 1. Update sector trends
         threading.Thread(target=update_sector_monthly_trends, daemon=True).start()
@@ -5726,11 +5837,18 @@ def auth_resend():
 
 @app.route('/api/tr/status', methods=['GET'])
 def tr_status():
-    # Reload config to check if token exists (in case it was updated externally)
-    tr_api.config.read(tr_api.config_path)
-    tr_api.session_token = tr_api.config.get("secret", "tr_session", fallback=None)
-    
-    is_logged_in = bool(tr_api.session_token)
+    """Returns whether the requesting IP has an active TR session."""
+    client_ip = _get_client_ip()
+    ip_token = _get_ip_session(client_ip)
+    if ip_token:
+        # Make sure the global tr_api uses this IP's token
+        tr_api.session_token = ip_token
+        is_logged_in = True
+    else:
+        # Fallback: check config-based session (single-user legacy)
+        tr_api.config.read(tr_api.config_path)
+        tr_api.session_token = tr_api.config.get("secret", "tr_session", fallback=None)
+        is_logged_in = bool(tr_api.session_token)
     return jsonify({"loggedIn": is_logged_in})
 
 # ============================================================================
@@ -6777,6 +6895,8 @@ def get_portfolio_performance():
 
 @app.route('/api/tr/logout', methods=['POST'])
 def tr_logout():
+    client_ip = _get_client_ip()
+    _clear_ip_session(client_ip)
     tr_api.save_session_token("")
     return jsonify({"success": True})
 
