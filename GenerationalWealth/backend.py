@@ -1357,9 +1357,9 @@ def _load_github_tokens():
 
 GITHUB_TOKENS = _load_github_tokens()
 GITHUB_TOKEN = GITHUB_TOKENS[0] if GITHUB_TOKENS else ""
-# GitHub Models API — endpoint compatible PAT classique (fallback si Groq absent)
-GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
-GITHUB_CLAUDE_MODEL = "gpt-4o"
+# GitHub Copilot API — accès à Claude Sonnet 4.6 (inclus dans Copilot Pro)
+GITHUB_MODELS_URL = "https://api.githubcopilot.com/chat/completions"
+GITHUB_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 
 def _jwt_expiry(token):
@@ -4320,50 +4320,71 @@ def get_assets_enriched(ticker):
     return jsonify(clean_for_json(result))
 
 # ============================================================================
-# AI ASSET ANALYSIS — Groq (llama-3.3-70b) en priorité, GitHub Models en fallback
+# AI ASSET ANALYSIS — GitHub Models API (Claude Sonnet 4.6)
 # ============================================================================
 
-def _call_claude(messages, max_tokens=2048):
-    """Appelle Groq llama-3.3-70b si la clé est configurée, sinon GitHub Models gpt-4o."""
-    # Priorité 1 : Groq (clé déjà dans config.ini [groq])
-    groq_key = _load_groq_key()
-    if groq_key:
-        try:
-            resp = requests.post(
-                GROQ_API_URL,
-                headers={
-                    "Authorization": f"Bearer {groq_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.7,
-                },
-                timeout=60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"], None
-        except requests.exceptions.HTTPError as e:
-            return None, f"Groq API error: {e.response.status_code} — {e.response.text[:200]}"
-        except Exception as e:
-            return None, str(e)
+# Cache du token Copilot éphémère : {oauth_token: {'copilot_token': str, 'expires_at': float}}
+_copilot_token_cache: dict = {}
 
-    # Fallback : GitHub Models (gpt-4o) via PAT classique
-    token = _get_github_token_for_request()
-    if not token:
-        return None, "Aucune clé IA configurée. Ajoutez [groq] api_key dans config.ini."
+def _get_copilot_token(oauth_token: str) -> tuple:
+    """Échange un token OAuth GitHub (gho_) contre un token Copilot éphémère.
+    Le token Copilot est valide ~30 min et accepté par api.githubcopilot.com."""
+    import time
+    cached = _copilot_token_cache.get(oauth_token)
+    if cached and cached['expires_at'] > time.time() + 60:
+        return cached['copilot_token'], None
+    try:
+        resp = requests.get(
+            "https://api.github.com/copilot_internal/v2/token",
+            headers={
+                "Authorization": f"token {oauth_token}",
+                "editor-version": "vscode/1.96.0",
+                "editor-plugin-version": "copilot-chat/0.26.0",
+                "user-agent": "GitHubCopilotChat/0.26.0",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        copilot_token = data.get("token", "")
+        # expires_at est une string ISO, refresh_in est en secondes
+        import time as _time
+        expires_at = _time.time() + data.get("refresh_in", 1500)
+        _copilot_token_cache[oauth_token] = {'copilot_token': copilot_token, 'expires_at': expires_at}
+        return copilot_token, None
+    except requests.exceptions.HTTPError as e:
+        return None, f"Copilot token exchange error: {e.response.status_code} — {e.response.text[:200]}"
+    except Exception as e:
+        return None, str(e)
+
+
+def _call_claude(messages, max_tokens=2048):
+    """Appelle Claude Sonnet 4.6 via GitHub Copilot API.
+    Échange d'abord le token OAuth (gho_) contre un token Copilot éphémère."""
+    oauth_token = _get_github_token_for_request()
+    if not oauth_token:
+        return None, "GitHub token non configuré. Ajoutez api_token (gho_...) dans config.ini [github]."
+
+    copilot_token, err = _get_copilot_token(oauth_token)
+    if err:
+        return None, err
+    if not copilot_token:
+        return None, "Impossible d'obtenir le token Copilot."
+
     try:
         resp = requests.post(
             GITHUB_MODELS_URL,
             headers={
-                "Authorization": f"Bearer {token}",
+                "Authorization": f"Bearer {copilot_token}",
                 "Content-Type": "application/json",
+                "editor-version": "vscode/1.96.0",
+                "editor-plugin-version": "copilot-chat/0.26.0",
+                "user-agent": "GitHubCopilotChat/0.26.0",
+                "x-github-api-version": "2023-07-07",
+                "Copilot-Integration-Id": "vscode-chat",
             },
             json={
-                "model": "gpt-4o",
+                "model": GITHUB_CLAUDE_MODEL,
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
