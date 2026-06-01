@@ -2,7 +2,7 @@ import sys
 import io
 import os
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, session as flask_session
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import json
@@ -447,7 +447,27 @@ app = Flask(__name__)
 try:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///financial_terminal_multiuser.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    
+
+    # Session secret key — load from config or generate a stable one
+    _cfg_sk = configparser.ConfigParser()
+    _cfg_sk.read("config.ini")
+    _sk = _cfg_sk.get("app", "secret_key", fallback="")
+    if not _sk:
+        _sk = hashlib.sha256(os.urandom(32)).hexdigest()
+        # Persist it so sessions survive restarts
+        try:
+            if not _cfg_sk.has_section("app"):
+                _cfg_sk.add_section("app")
+            _cfg_sk.set("app", "secret_key", _sk)
+            with open("config.ini", "w") as _f:
+                _cfg_sk.write(_f)
+        except Exception:
+            pass
+    app.config['SECRET_KEY'] = _sk
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+
     # Increase Pool Size for Threads
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_size': 30,
@@ -455,7 +475,7 @@ try:
         'pool_timeout': 60,
         'pool_recycle': 1800
     }
-    
+
     db = SQLAlchemy(app)
     print("[OK] Database initialized successfully")
 except Exception as e:
@@ -470,11 +490,13 @@ except Exception as e:
         def create_all(self): pass
     db = MockDB()
 
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
+    origin = request.headers.get('Origin', '*')
+    response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-User-Phone'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     return response
@@ -491,6 +513,52 @@ class User(db.Model):
     first_name = db.Column(db.String(100))
     last_name = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class AppUser(db.Model):
+    """Web-app authentication — separate from Trade Republic credentials."""
+    __tablename__ = 'app_user'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    # Per-user GitHub token for AI analysis
+    github_token = db.Column(db.String(200), default='')
+    # Optional link to TR credentials (phone stored, pin hashed)
+    tr_phone = db.Column(db.String(50), default='')
+    tr_pin_hash = db.Column(db.String(128), default='')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_admin = db.Column(db.Boolean, default=False)
+
+    @staticmethod
+    def hash_password(password: str) -> str:
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def check_password(self, password: str) -> bool:
+        return self.password_hash == hashlib.sha256(password.encode()).hexdigest()
+
+
+def _get_current_app_user():
+    """Returns the AppUser for the current session, or None."""
+    uid = flask_session.get('app_user_id')
+    if not uid:
+        return None
+    try:
+        return AppUser.query.get(uid)
+    except Exception:
+        return None
+
+
+def require_auth(f):
+    """Decorator: returns 401 if no valid session."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _get_current_app_user():
+            return jsonify({'status': 'error', 'message': 'Non authentifié', 'code': 'UNAUTHENTICATED'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
 
 class IsinTicker(db.Model):
     isin = db.Column(db.String(20), primary_key=True)
@@ -608,6 +676,125 @@ class MacroData(db.Model):
 # Initialize DB
 with app.app_context():
     db.create_all()
+
+# ============================================================================
+# AUTH ENDPOINTS
+# ============================================================================
+
+@app.route('/api/auth/register', methods=['POST', 'OPTIONS'])
+def auth_register():
+    if request.method == 'OPTIONS':
+        return '', 204
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    github_token = (data.get('github_token') or '').strip()
+    tr_phone = (data.get('tr_phone') or '').strip()
+    tr_pin = (data.get('tr_pin') or '').strip()
+
+    if not username or not password:
+        return jsonify({'status': 'error', 'message': 'Nom d\'utilisateur et mot de passe requis'}), 400
+    if len(password) < 4:
+        return jsonify({'status': 'error', 'message': 'Mot de passe trop court (min 4 caractères)'}), 400
+
+    with app.app_context():
+        if AppUser.query.filter_by(username=username).first():
+            return jsonify({'status': 'error', 'message': 'Ce nom d\'utilisateur est déjà pris'}), 409
+        is_first = AppUser.query.count() == 0
+        user = AppUser(
+            username=username,
+            password_hash=AppUser.hash_password(password),
+            github_token=github_token,
+            tr_phone=tr_phone,
+            tr_pin_hash=AppUser.hash_password(tr_pin) if tr_pin else '',
+            is_admin=is_first,
+        )
+        db.session.add(user)
+        db.session.commit()
+        flask_session.permanent = True
+        flask_session['app_user_id'] = user.id
+        flask_session['app_username'] = user.username
+        return jsonify({'status': 'ok', 'username': user.username, 'is_admin': user.is_admin}), 201
+
+
+@app.route('/api/auth/login', methods=['POST', 'OPTIONS'])
+def auth_login():
+    if request.method == 'OPTIONS':
+        return '', 204
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+
+    if not username or not password:
+        return jsonify({'status': 'error', 'message': 'Identifiants requis'}), 400
+
+    with app.app_context():
+        user = AppUser.query.filter_by(username=username).first()
+        if not user or not user.check_password(password):
+            return jsonify({'status': 'error', 'message': 'Identifiants incorrects'}), 401
+        flask_session.permanent = True
+        flask_session['app_user_id'] = user.id
+        flask_session['app_username'] = user.username
+        return jsonify({'status': 'ok', 'username': user.username, 'is_admin': user.is_admin})
+
+
+@app.route('/api/auth/logout', methods=['POST', 'OPTIONS'])
+def auth_logout():
+    if request.method == 'OPTIONS':
+        return '', 204
+    flask_session.clear()
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    with app.app_context():
+        user = _get_current_app_user()
+        if not user:
+            return jsonify({'status': 'unauthenticated'})
+        return jsonify({
+            'status': 'authenticated',
+            'username': user.username,
+            'is_admin': user.is_admin,
+            'has_github_token': bool(user.github_token),
+            'has_tr_config': bool(user.tr_phone),
+        })
+
+
+@app.route('/api/auth/update', methods=['POST', 'OPTIONS'])
+@require_auth
+def auth_update():
+    """Update current user's settings (github token, TR credentials, password)."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    data = request.get_json(silent=True) or {}
+    with app.app_context():
+        user = _get_current_app_user()
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Non authentifié'}), 401
+        user = AppUser.query.get(user.id)
+        if data.get('github_token') is not None:
+            user.github_token = data['github_token'].strip()
+        if data.get('tr_phone') is not None:
+            user.tr_phone = data['tr_phone'].strip()
+        if data.get('tr_pin') is not None and data['tr_pin']:
+            user.tr_pin_hash = AppUser.hash_password(data['tr_pin'])
+        if data.get('new_password') and len(data['new_password']) >= 4:
+            user.password_hash = AppUser.hash_password(data['new_password'])
+        db.session.commit()
+        return jsonify({'status': 'ok'})
+
+
+# Helper to get GitHub token for current user (falls back to config)
+def _get_github_token_for_request():
+    try:
+        user = _get_current_app_user()
+        if user and user.github_token:
+            return user.github_token
+    except Exception:
+        pass
+    return GITHUB_TOKEN
+
 
 # Helper to migrate/load data
 def db_save_portfolio(data, user_phone=None):
@@ -4026,13 +4213,14 @@ def get_assets_enriched(ticker):
 
 def _call_claude(messages, max_tokens=2048):
     """Calls Claude Sonnet 4.6 via GitHub Models API. Returns the response text."""
-    if not GITHUB_TOKEN:
-        return None, "GitHub token not configured. Add [github] api_token to config.ini."
+    token = _get_github_token_for_request()
+    if not token:
+        return None, "GitHub token non configuré. Ajoutez-le dans les paramètres de votre compte."
     try:
         resp = requests.post(
             GITHUB_MODELS_URL,
             headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
             json={
