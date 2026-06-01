@@ -4542,9 +4542,7 @@ def _get_assets_ai_analysis_inner(ticker):
         "Fournis des données chiffrées précises quand tu en disposes."
     )
 
-    results = {}
-
-    # ── Question 1 : Données à étudier ────────────────────────────────────
+    # ── Préparer les 3 prompts ─────────────────────────────────────────────
     q1_messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": (
@@ -4553,10 +4551,6 @@ def _get_assets_ai_analysis_inner(ticker):
             f"Explique chaque métrique importante, son interprétation et son seuil critique pour ce type d'entreprise ({sector} / {industry})."
         )}
     ]
-    text1, err1 = _call_claude(q1_messages, max_tokens=1500)
-    results['what_to_study'] = {'text': text1, 'error': err1}
-
-    # ── Question 2 : Données réelles et évolution ─────────────────────────
     q2_messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": (
@@ -4568,10 +4562,6 @@ def _get_assets_ai_analysis_inner(ticker):
             f"Structure ta réponse avec : 1) Analyse fondamentale, 2) Analyse du prix, 3) Signaux techniques, 4) Score global."
         )}
     ]
-    text2, err2 = _call_claude(q2_messages, max_tokens=2000)
-    results['data_analysis'] = {'text': text2, 'error': err2, 'price_history': price_history}
-
-    # ── Question 3 : Risques et signal de vente ───────────────────────────
     q3_messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": (
@@ -4585,8 +4575,25 @@ def _get_assets_ai_analysis_inner(ticker):
             f"et les signaux fondamentaux qui doivent déclencher une vente."
         )}
     ]
-    text3, err3 = _call_claude(q3_messages, max_tokens=1500)
-    results['risks_and_exit'] = {'text': text3, 'error': err3}
+
+    # ── Lancer les 3 appels Claude en parallèle ───────────────────────────
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    tasks = {
+        'what_to_study': (q1_messages, 1200),
+        'data_analysis': (q2_messages, 1500),
+        'risks_and_exit': (q3_messages, 1200),
+    }
+    results = {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_key = {
+            executor.submit(_call_claude, msgs, toks): key
+            for key, (msgs, toks) in tasks.items()
+        }
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            text, err = future.result()
+            results[key] = {'text': text, 'error': err}
+    results['data_analysis']['price_history'] = price_history
 
     return jsonify({
         'status': 'success',
