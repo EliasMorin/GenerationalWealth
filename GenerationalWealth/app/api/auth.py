@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session as flask_session
 from ..models.user import AppUser
-from ..utils.auth import require_auth, _get_github_token_for_request
+from ..utils.auth import require_auth
 import hashlib
 
 # Create blueprint

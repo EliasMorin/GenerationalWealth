@@ -40,37 +40,6 @@ def get_cash_analysis():
     return jsonify({"status": "success", "data": result})
 
 
-# Helper to get GitHub token for current user (falls back to config)
-def _get_github_token_for_request():
-    try:
-        user = _get_current_app_user()
-        if user and user.github_token:
-            return user.github_token
-    except Exception:
-        pass
-    # Multi-comptes : distribue les tokens par hash d'IP
-    try:
-        from ..utils.auth import GITHUB_TOKENS, GITHUB_TOKEN
-        if GITHUB_TOKENS:
-            try:
-                ip = _get_client_ip()
-                idx = hash(ip) % len(GITHUB_TOKENS)
-                return GITHUB_TOKENS[idx]
-            except Exception:
-                pass
-        return GITHUB_TOKEN
-    except ImportError:
-        # Fallback if utils not available yet
-        return ""
-
-def _get_client_ip():
-    """Returns the real client IP, considering X-Forwarded-For from proxies."""
-    forwarded = request.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
-    return request.remote_addr or '0.0.0.0'
-
-
 def _get_current_app_user():
     """Returns the AppUser for the current session, or None."""
     uid = request.headers.get('X-User-ID') or request.headers.get('X-User-Phone')  # Simplified for now

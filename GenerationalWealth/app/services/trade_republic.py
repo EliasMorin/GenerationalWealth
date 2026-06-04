@@ -285,8 +285,14 @@ class TradeRepublicAPI:
     def fetch_portfolio(self):
         """Fetch portfolio data from Trade Republic API."""
         if not self.session_token:
-            print("[ERROR] No session token available")
-            return None
+            if self.refresh_token:
+                print("[INFO] No session token, attempting to refresh using refresh token")
+                if not self.refresh_session():
+                    print("[ERROR] Failed to refresh session")
+                    return None
+            else:
+                print("[ERROR] No session token available")
+                return None
 
         try:
             sec_acc_no = self.get_sec_acc_no()

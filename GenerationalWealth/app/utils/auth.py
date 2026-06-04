@@ -103,3 +103,32 @@ GITHUB_TOKEN = GITHUB_TOKENS[0] if GITHUB_TOKENS else ""
 # GitHub Copilot API — access to Claude Sonnet 4.6 (included in Copilot Pro)
 GITHUB_MODELS_URL = "https://api.githubcopilot.com/chat/completions"
 GITHUB_CLAUDE_MODEL = "claude-sonnet-4.6"
+
+def _get_github_token_for_request():
+    try:
+        user = _get_current_app_user()
+        if user and user.github_token:
+            return user.github_token
+    except Exception:
+        pass
+    # Multi-comptes : distribue les tokens par hash d'IP
+    try:
+        from ..utils.auth import GITHUB_TOKENS, GITHUB_TOKEN
+        if GITHUB_TOKENS:
+            try:
+                ip = _get_client_ip()
+                idx = hash(ip) % len(GITHUB_TOKENS)
+                return GITHUB_TOKENS[idx]
+            except Exception:
+                pass
+        return GITHUB_TOKEN
+    except ImportError:
+        # Fallback if utils not available yet
+        return ""
+
+def _get_client_ip():
+    """Returns the real client IP, considering X-Forwarded-For from proxies."""
+    forwarded = flask_session.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return flask_session.get('remote_addr') or '0.0.0.0'
