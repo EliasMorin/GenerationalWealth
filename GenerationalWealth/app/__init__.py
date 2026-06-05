@@ -76,6 +76,15 @@ def create_app(config_object=None):
     # Start background tasks
     start_background_tasks(app)
 
+    # Serve terminal.html file
+    @app.route('/terminal.html')
+    def serve_terminal():
+        """Serve the terminal.html file from project root"""
+        from flask import send_from_directory
+        import os
+        project_root = os.path.dirname(app.root_path)
+        return send_from_directory(project_root, 'terminal.html')
+
     return app
 
 
