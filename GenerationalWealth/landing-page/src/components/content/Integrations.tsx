@@ -4,9 +4,9 @@ import { motion } from "framer-motion";
 import { SiRevolut, SiBinance, SiCoinbase, SiStripe, SiRobinhood } from "react-icons/si";
 
 const brokers = [
-  { name: "Trade Republic", icon: <img src="https://cdn.brandfetch.io/id5mURhE1s/theme/light/symbol.svg?c=1bxid64Mup7aczewSAYMX&t=1695070245727" alt="Trade Republic logo" className="w-8 h-8 rounded-full shadow-[0_0_15px_rgba(255,255,255,0.4)]" /> },
-  { name: "Revolut", icon: <SiRevolut className="w-8 h-8 text-black bg-white rounded-full p-1 shadow-[0_0_15px_rgba(255,255,255,0.4)]" /> },
-  { name: "Interactive Brokers", icon: <img src="https://cdn.brandfetch.io/idcABCQwX-/w/400/h/400/theme/dark/icon.jpeg?c=1bxid64Mup7aczewSAYMX&t=1667570681287" alt="Interactive Brokers logo" className="w-8 h-8 rounded-full shadow-[0_0_15px_rgba(220,38,38,0.4)]" /> },
+  { name: "Trade Republic", icon: <img src="https://cdn.brandfetch.io/id5mURhE1s/theme/light/symbol.svg?c=1bxid64Mup7aczewSAYMX&t=1695070245727" alt="Trade Republic logo" className="w-8 h-8 object-contain drop-shadow-[0_0_10px_rgba(255,255,255,0.4)]" /> },
+  { name: "Revolut", icon: <SiRevolut className="w-8 h-8 text-black bg-white rounded-md p-1 shadow-[0_0_10px_rgba(255,255,255,0.4)]" /> },
+  { name: "Interactive Brokers", icon: <img src="https://cdn.brandfetch.io/idcABCQwX-/w/400/h/400/theme/dark/icon.jpeg?c=1bxid64Mup7aczewSAYMX&t=1667570681287" alt="Interactive Brokers logo" className="w-8 h-8 object-contain rounded-md shadow-[0_0_10px_rgba(220,38,38,0.4)]" /> },
   { name: "Robinhood", icon: <SiRobinhood className="w-8 h-8 text-[#00c805] drop-shadow-[0_0_10px_rgba(0,200,5,0.5)]" /> },
   { name: "Binance", icon: <SiBinance className="w-8 h-8 text-[#fcd535] drop-shadow-[0_0_10px_rgba(252,213,53,0.5)]" /> },
   { name: "Coinbase", icon: <SiCoinbase className="w-8 h-8 text-[#0052ff] drop-shadow-[0_0_10px_rgba(0,82,255,0.5)]" /> },
