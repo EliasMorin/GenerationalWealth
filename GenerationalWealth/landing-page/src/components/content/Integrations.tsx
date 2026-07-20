@@ -4,9 +4,9 @@ import { motion } from "framer-motion";
 import { SiRevolut, SiBinance, SiCoinbase, SiStripe, SiRobinhood } from "react-icons/si";
 
 const brokers = [
-  { name: "Trade Republic", icon: <span className="w-6 h-6 rounded-full bg-white block shadow-[0_0_15px_rgba(255,255,255,0.6)]" /> },
+  { name: "Trade Republic", icon: <img src="https://logo.clearbit.com/traderepublic.com" alt="Trade Republic logo" className="w-8 h-8 rounded-full bg-white shadow-[0_0_15px_rgba(255,255,255,0.4)]" /> },
   { name: "Revolut", icon: <SiRevolut className="w-8 h-8 text-black bg-white rounded-full p-1 shadow-[0_0_15px_rgba(255,255,255,0.4)]" /> },
-  { name: "Interactive Brokers", icon: <span className="w-6 h-6 rounded-full bg-red-600 block shadow-[0_0_15px_rgba(220,38,38,0.6)]" /> },
+  { name: "Interactive Brokers", icon: <img src="https://logo.clearbit.com/interactivebrokers.com" alt="Interactive Brokers logo" className="w-8 h-8 rounded-full bg-white shadow-[0_0_15px_rgba(220,38,38,0.4)]" /> },
   { name: "Robinhood", icon: <SiRobinhood className="w-8 h-8 text-[#00c805] drop-shadow-[0_0_10px_rgba(0,200,5,0.5)]" /> },
   { name: "Binance", icon: <SiBinance className="w-8 h-8 text-[#fcd535] drop-shadow-[0_0_10px_rgba(252,213,53,0.5)]" /> },
   { name: "Coinbase", icon: <SiCoinbase className="w-8 h-8 text-[#0052ff] drop-shadow-[0_0_10px_rgba(0,82,255,0.5)]" /> },
