@@ -5,15 +5,15 @@ import LiveTerminalPreview from "@/components/data/LiveTerminalPreview";
 import { Pricing } from "@/components/content/Pricing";
 import { FAQ } from "@/components/content/FAQ";
 import { Footer } from "@/components/content/Footer";
-import { SectionTransition, SectionDivider } from "@/components/ui/SectionTransition";
+import { SectionTransition } from "@/components/ui/SectionTransition";
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-black selection:bg-white/30 selection:text-white overflow-hidden">
+    <main className="min-h-screen bg-black selection:bg-white/30 selection:text-white">
       <Navbar />
       <HeroSection />
       
-      <div className="relative z-10 bg-black pt-24 pb-32 flex flex-col">
+      <div className="relative z-10 bg-black pt-24 pb-32 flex flex-col gap-32">
         <SectionTransition>
           <section className="container mx-auto px-4 flex flex-col items-center">
             <div className="text-center mb-12 max-w-2xl mx-auto">
@@ -24,20 +24,14 @@ export default function Home() {
           </section>
         </SectionTransition>
         
-        <SectionDivider />
-        
         <SectionTransition>
           <Features />
         </SectionTransition>
-
-        <SectionDivider />
-
+        
         <SectionTransition>
           <Pricing />
         </SectionTransition>
-
-        <SectionDivider />
-
+        
         <SectionTransition>
           <FAQ />
         </SectionTransition>
