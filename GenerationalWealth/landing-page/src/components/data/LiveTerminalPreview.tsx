@@ -48,7 +48,7 @@ const getTypeColor = (type: string) => {
 
 export default function LiveTerminalPreview() {
   const [messages, setMessages] = useState<TerminalMessage[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let currentIndex = 0;
@@ -97,7 +97,12 @@ export default function LiveTerminalPreview() {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
   }, [messages]);
 
   return (
@@ -117,7 +122,7 @@ export default function LiveTerminalPreview() {
       </div>
 
       {/* Terminal Body */}
-      <div className="p-4 sm:p-6 font-mono text-sm h-[350px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+      <div ref={scrollContainerRef} className="p-4 sm:p-6 font-mono text-sm h-[350px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
         <div className="space-y-2">
           {messages.map((msg) => (
             <div key={msg.id} className="flex flex-col sm:flex-row sm:items-start group">
@@ -134,7 +139,6 @@ export default function LiveTerminalPreview() {
               </div>
             </div>
           ))}
-          <div ref={messagesEndRef} />
         </div>
         
         {/* Blinking Cursor */}
