@@ -54,7 +54,7 @@ export function Pricing() {
             transition={{ delay: 0.1 }}
             className="text-neutral-400 text-lg"
           >
-            Select the tier that aligns with your firm's requirements.
+            Select the tier that aligns with your firm&apos;s requirements.
           </motion.p>
         </div>
 

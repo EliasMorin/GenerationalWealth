@@ -62,7 +62,7 @@ export default function LiveTerminalPreview() {
         
         setMessages((prev) => [
           ...prev,
-          { id: Date.now() + currentIndex, timestamp, type: event.type as any, content: event.content },
+          { id: Date.now() + currentIndex, timestamp, type: event.type as "INFO" | "ALERT" | "TRADE" | "SYSTEM" | "DATA", content: event.content },
         ]);
         currentIndex++;
       } else {
@@ -80,7 +80,7 @@ export default function LiveTerminalPreview() {
           const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
           
           setMessages((prev) => {
-            const newMessages = [...prev, { id: Date.now(), timestamp, type: event.type as any, content: event.content }];
+            const newMessages = [...prev, { id: Date.now(), timestamp, type: event.type as "INFO" | "ALERT" | "TRADE" | "SYSTEM" | "DATA", content: event.content }];
             if (newMessages.length > 20) return newMessages.slice(newMessages.length - 20); // Keep last 20
             return newMessages;
           });

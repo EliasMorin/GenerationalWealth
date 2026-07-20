@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -11,7 +11,7 @@ function NodeNetwork() {
   const pointsRef = useRef<THREE.Points>(null);
 
   // Store initial positions to animate them
-  const { positions, linesIndices, initialPositions } = useMemo(() => {
+  const [{ positions, linesIndices, initialPositions }] = useState(() => {
     const pos = new Float32Array(pointsCount * 3);
     const initialPos = new Float32Array(pointsCount * 3);
     for (let i = 0; i < pointsCount; i++) {
@@ -41,7 +41,7 @@ function NodeNetwork() {
       }
     }
     return { positions: pos, linesIndices: new Uint16Array(indices), initialPositions: initialPos };
-  }, []);
+  });
 
   useFrame((state) => {
     const time = state.clock.getElapsedTime();
@@ -70,9 +70,7 @@ function NodeNetwork() {
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
-            count={pointsCount}
-            array={positions}
-            itemSize={3}
+            args={[positions, 3]}
           />
         </bufferGeometry>
         <pointsMaterial 
@@ -88,15 +86,11 @@ function NodeNetwork() {
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
-            count={pointsCount}
-            array={positions}
-            itemSize={3}
+            args={[positions, 3]}
           />
           <bufferAttribute
             attach="index"
-            count={linesIndices.length}
-            array={linesIndices}
-            itemSize={1}
+            args={[linesIndices, 1]}
           />
         </bufferGeometry>
         <lineBasicMaterial 

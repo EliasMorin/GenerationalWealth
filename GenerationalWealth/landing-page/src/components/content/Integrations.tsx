@@ -1,12 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { SiRevolut, SiInteractivebrokers, SiBinance, SiCoinbase, SiStripe, SiRobinhood } from "react-icons/si";
+import { SiRevolut, SiBinance, SiCoinbase, SiStripe, SiRobinhood } from "react-icons/si";
 
 const brokers = [
   { name: "Trade Republic", icon: <div className="font-bold tracking-tighter text-xl flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-white block" /> Trade Republic</div> },
   { name: "Revolut", icon: <SiRevolut className="w-8 h-8" /> },
-  { name: "Interactive Brokers", icon: <SiInteractivebrokers className="w-8 h-8" /> },
+  { name: "Interactive Brokers", icon: <div className="font-bold tracking-tighter text-xl flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-red-600 block" /> Interactive Brokers</div> },
   { name: "Robinhood", icon: <SiRobinhood className="w-8 h-8" /> },
   { name: "Binance", icon: <SiBinance className="w-8 h-8" /> },
   { name: "Coinbase", icon: <SiCoinbase className="w-8 h-8" /> },
