@@ -1,5 +1,6 @@
 import { Navbar } from "@/components/Navbar";
 import { HeroSection } from "@/components/hero/HeroSection";
+import { Integrations } from "@/components/content/Integrations";
 import { Features } from "@/components/content/Features";
 import LiveTerminalPreview from "@/components/data/LiveTerminalPreview";
 import { Pricing } from "@/components/content/Pricing";
@@ -12,6 +13,7 @@ export default function Home() {
     <main className="min-h-screen bg-black selection:bg-white/30 selection:text-white">
       <Navbar />
       <HeroSection />
+      <Integrations />
       
       <div className="relative z-10 bg-black pt-24 pb-32 flex flex-col gap-32">
         <SectionTransition>
