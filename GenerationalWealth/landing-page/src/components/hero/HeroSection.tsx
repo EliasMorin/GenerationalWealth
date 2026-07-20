@@ -8,8 +8,8 @@ import { Abstract3DObject } from "./Abstract3DObject";
 export function HeroSection() {
   return (
     <div className="relative w-full h-screen min-h-[800px] flex items-center justify-center overflow-hidden bg-black text-white">
-      {/* Background Gradient */}
-      <div className="absolute inset-0 z-0 opacity-70">
+      {/* Background Shader Gradient (Layer 1) */}
+      <div className="absolute inset-0 z-0 opacity-70 pointer-events-none">
         <ShaderGradientCanvas
           style={{
             position: "absolute",
@@ -30,11 +30,14 @@ export function HeroSection() {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/50 to-black pointer-events-none" />
       </div>
 
-      {/* Content */}
-      <div className="relative z-10 flex flex-col lg:flex-row items-center justify-between px-6 max-w-7xl mx-auto w-full gap-12 lg:gap-8">
-        {/* Text Content */}
-        <div className="flex-1 text-left flex flex-col items-start pt-20 lg:pt-0">
-          <motion.div
+      {/* Background 3D Object (Layer 2) */}
+      <div className="absolute inset-0 z-10 opacity-60 pointer-events-none">
+        <Abstract3DObject />
+      </div>
+
+      {/* Content (Layer 3) */}
+      <div className="relative z-20 flex flex-col items-center justify-center px-6 text-center max-w-4xl mx-auto pointer-events-auto">
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
@@ -48,7 +51,7 @@ export function HeroSection() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.1, ease: "easeOut" }}
-          className="text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight mb-8"
+          className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 drop-shadow-2xl"
         >
           Professional-grade financial <br className="hidden md:block" />
           <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-blue-200 to-white">
@@ -60,7 +63,7 @@ export function HeroSection() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
-          className="text-lg md:text-xl text-gray-400 mb-10 max-w-2xl leading-relaxed"
+          className="text-lg md:text-xl text-gray-400 mb-10 max-w-2xl leading-relaxed drop-shadow-lg"
         >
           Experience institutional-level analytics, real-time market data, and advanced portfolio management without installing a single application.
         </motion.p>
@@ -78,19 +81,6 @@ export function HeroSection() {
             View Documentation
           </button>
         </motion.div>
-        </div>
-
-        {/* 3D Element */}
-        <div className="flex-1 w-full flex items-center justify-center">
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
-            className="w-full h-full min-h-[400px] md:min-h-[500px]"
-          >
-            <Abstract3DObject />
-          </motion.div>
-        </div>
       </div>
     </div>
   );

@@ -1,63 +1,85 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Sphere, MeshDistortMaterial, Float, Environment, Edges } from "@react-three/drei";
 import * as THREE from "three";
 
-function AbstractShape() {
-  const meshRef = useRef<THREE.Mesh>(null);
+function NodeNetwork() {
+  const pointsCount = 300;
+  const maxDistance = 2.5;
+  const groupRef = useRef<THREE.Group>(null);
+
+  const { positions, linesIndices } = useMemo(() => {
+    const pos = new Float32Array(pointsCount * 3);
+    for (let i = 0; i < pointsCount; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 20;
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 20;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 10 - 5; // Push slightly back
+    }
+    
+    const indices = [];
+    for (let i = 0; i < pointsCount; i++) {
+      for (let j = i + 1; j < pointsCount; j++) {
+        const dx = pos[i * 3] - pos[j * 3];
+        const dy = pos[i * 3 + 1] - pos[j * 3 + 1];
+        const dz = pos[i * 3 + 2] - pos[j * 3 + 2];
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < maxDistance) {
+          indices.push(i, j);
+        }
+      }
+    }
+    return { positions: pos, linesIndices: new Uint16Array(indices) };
+  }, []);
 
   useFrame((state) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.x = state.clock.getElapsedTime() * 0.2;
-      meshRef.current.rotation.y = state.clock.getElapsedTime() * 0.3;
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.03;
+      groupRef.current.rotation.x = state.clock.getElapsedTime() * 0.01;
     }
   });
 
   return (
-    <Float speed={2} rotationIntensity={1} floatIntensity={2}>
-      <mesh ref={meshRef}>
-        <icosahedronGeometry args={[1.5, 1]} />
-        <meshStandardMaterial 
-          color="#3b82f6" 
-          wireframe 
-          transparent
-          opacity={0.3}
-        />
-        <Edges
-          scale={1.05}
-          threshold={15}
-          color="#60a5fa"
-        />
-      </mesh>
-      
-      {/* Inner glowing core */}
-      <Sphere args={[0.8, 32, 32]}>
-        <MeshDistortMaterial
-          color="#1e3a8a"
-          envMapIntensity={1}
-          clearcoat={1}
-          clearcoatRoughness={0.1}
-          metalness={0.8}
-          roughness={0.2}
-          distort={0.4}
-          speed={3}
-        />
-      </Sphere>
-    </Float>
+    <group ref={groupRef}>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={pointsCount}
+            array={positions}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <pointsMaterial color="#60a5fa" size={0.06} transparent opacity={0.6} sizeAttenuation={true} />
+      </points>
+      <lineSegments>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={pointsCount}
+            array={positions}
+            itemSize={3}
+          />
+          <bufferAttribute
+            attach="index"
+            count={linesIndices.length}
+            array={linesIndices}
+            itemSize={1}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial color="#1e3a8a" transparent opacity={0.25} />
+      </lineSegments>
+    </group>
   );
 }
 
 export function Abstract3DObject() {
   return (
-    <div className="w-full h-full min-h-[400px] md:min-h-[500px] relative">
-      <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
+    <div className="absolute inset-0 w-full h-full pointer-events-none">
+      <Canvas camera={{ position: [0, 0, 8], fov: 60 }} gl={{ alpha: true }}>
+        <fog attach="fog" args={["#000000", 5, 20]} />
         <ambientLight intensity={0.5} />
-        <directionalLight position={[10, 10, 5]} intensity={1.5} />
-        <directionalLight position={[-10, -10, -5]} intensity={0.5} color="#3b82f6" />
-        <AbstractShape />
-        <Environment preset="city" />
+        <NodeNetwork />
       </Canvas>
     </div>
   );
