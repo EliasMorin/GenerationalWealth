@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Activity, Users, BarChart3, Zap, Shield, Globe } from "lucide-react";
+import { Activity, Users, BarChart3, Zap, Shield, Globe, Briefcase } from "lucide-react";
 
 const features = [
   {
@@ -20,9 +20,9 @@ const features = [
     description: "Institutional-grade charting with over 100+ technical indicators and drawing tools.",
   },
   {
-    icon: <Zap className="w-6 h-6 text-neutral-400 group-hover:text-white transition-colors" />,
-    title: "Lightning Execution",
-    description: "Direct market access routing ensures your trades are executed at the absolute best prices.",
+    icon: <Briefcase className="w-6 h-6 text-neutral-400 group-hover:text-white transition-colors" />,
+    title: "Broker Integration",
+    description: "Connect seamlessly to Trade Republic. Sync your portfolio, analyze cash flows, and track wallet investments automatically.",
   },
   {
     icon: <Shield className="w-6 h-6 text-neutral-400 group-hover:text-white transition-colors" />,
