@@ -3,6 +3,7 @@
 import React from "react";
 import { ShaderGradientCanvas, ShaderGradient } from "@shadergradient/react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { Abstract3DObject } from "./Abstract3DObject";
 
 export function HeroSection() {
@@ -74,9 +75,9 @@ export function HeroSection() {
           transition={{ duration: 0.8, delay: 0.3, ease: "easeOut" }}
           className="flex flex-col sm:flex-row items-center gap-4"
         >
-          <button className="px-8 py-4 text-sm font-semibold text-black transition-all bg-white rounded-lg hover:bg-gray-200 hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_40px_rgba(255,255,255,0.2)]">
+          <Link href="/dashboard" className="px-8 py-4 text-sm font-semibold text-black transition-all bg-white rounded-lg hover:bg-gray-200 hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_40px_rgba(255,255,255,0.2)]">
             Open Terminal
-          </button>
+          </Link>
           <button className="px-8 py-4 text-sm font-semibold text-white transition-all border border-white/20 rounded-lg hover:bg-white/5 backdrop-blur-sm">
             View Documentation
           </button>
