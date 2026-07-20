@@ -4,13 +4,13 @@ import { motion } from "framer-motion";
 import { SiRevolut, SiBinance, SiCoinbase, SiStripe, SiRobinhood } from "react-icons/si";
 
 const brokers = [
-  { name: "Trade Republic", icon: <div className="font-bold tracking-tighter text-xl flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-white block" /> Trade Republic</div> },
-  { name: "Revolut", icon: <SiRevolut className="w-8 h-8" /> },
-  { name: "Interactive Brokers", icon: <div className="font-bold tracking-tighter text-xl flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-red-600 block" /> Interactive Brokers</div> },
-  { name: "Robinhood", icon: <SiRobinhood className="w-8 h-8" /> },
-  { name: "Binance", icon: <SiBinance className="w-8 h-8" /> },
-  { name: "Coinbase", icon: <SiCoinbase className="w-8 h-8" /> },
-  { name: "Stripe", icon: <SiStripe className="w-10 h-10" /> },
+  { name: "Trade Republic", icon: <span className="w-6 h-6 rounded-full bg-white block shadow-[0_0_15px_rgba(255,255,255,0.6)]" /> },
+  { name: "Revolut", icon: <SiRevolut className="w-8 h-8 text-black bg-white rounded-full p-1 shadow-[0_0_15px_rgba(255,255,255,0.4)]" /> },
+  { name: "Interactive Brokers", icon: <span className="w-6 h-6 rounded-full bg-red-600 block shadow-[0_0_15px_rgba(220,38,38,0.6)]" /> },
+  { name: "Robinhood", icon: <SiRobinhood className="w-8 h-8 text-[#00c805] drop-shadow-[0_0_10px_rgba(0,200,5,0.5)]" /> },
+  { name: "Binance", icon: <SiBinance className="w-8 h-8 text-[#fcd535] drop-shadow-[0_0_10px_rgba(252,213,53,0.5)]" /> },
+  { name: "Coinbase", icon: <SiCoinbase className="w-8 h-8 text-[#0052ff] drop-shadow-[0_0_10px_rgba(0,82,255,0.5)]" /> },
+  { name: "Stripe", icon: <SiStripe className="w-10 h-10 text-[#635bff] drop-shadow-[0_0_10px_rgba(99,91,255,0.5)]" /> },
 ];
 
 export function Integrations() {
@@ -43,12 +43,10 @@ export function Integrations() {
           {duplicatedBrokers.map((broker, i) => (
             <div 
               key={i} 
-              className="flex items-center gap-3 text-neutral-400 hover:text-white transition-colors duration-300 grayscale hover:grayscale-0 opacity-70 hover:opacity-100 cursor-pointer"
+              className="flex items-center gap-3 text-neutral-300 hover:text-white transition-all duration-300 hover:scale-105 cursor-pointer"
             >
               {broker.icon}
-              {broker.name !== "Trade Republic" && (
-                <span className="text-xl font-bold tracking-tight">{broker.name}</span>
-              )}
+              <span className="text-2xl font-bold tracking-tight">{broker.name}</span>
             </div>
           ))}
         </motion.div>
